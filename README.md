@@ -16,6 +16,9 @@ PKI for that).
 Keys are ECDSA P-256 (ring, the crypto backend used, doesn't support RSA
 key generation -- P-256 is a good modern default for a "quick CA" tool).
 
+## Quick start
+Just try it with no args and read the output and enjoy !
+
 ## Usage
 
 The common case needs no subcommand and no options at all:
