@@ -1,0 +1,18 @@
+[package]
+name = "boringca"
+version = "1.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Quickly create a CA and issue child certificates, self-contained (rcgen/ring, no external openssl)"
+authors = ["Fabrice Dagorn <fabrice@dagorn.fr>"]
+repository = "https://github.com/fabroce/boringca"
+readme = "README.md"
+publish = false
+
+[[bin]]
+name = "boringca"
+path = "src/main.rs"
+
+[dependencies]
+rcgen = "0.13.2"
+time = "0.3.36"

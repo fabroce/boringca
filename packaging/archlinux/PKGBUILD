@@ -1,0 +1,29 @@
+# Maintainer: Fabrice Dagorn <fabrice@dagorn.fr>
+pkgname=boringca
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Quickly create a CA and issue child certificates (self-contained, rcgen/ring)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/fdagorn/boringca"
+license=('MIT' 'Apache-2.0')
+depends=()
+makedepends=('cargo')
+source=()
+options=('!lto')
+
+# This PKGBUILD is meant to be run from within the boringca source tree
+# (packaging/archlinux/), e.g.:
+#   cd packaging/archlinux && makepkg -si
+build() {
+  cd "$startdir"
+  cargo build --release --locked || cargo build --release
+}
+
+package() {
+  cd "$startdir"
+  install -Dm755 target/release/boringca "$pkgdir/usr/bin/boringca"
+  install -Dm644 man/boringca.1 "$pkgdir/usr/share/man/man1/boringca.1"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

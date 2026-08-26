@@ -1,0 +1,36 @@
+Source: boringca
+Section: utils
+Priority: optional
+Maintainer: Fabrice Dagorn <fabrice@dagorn.fr>
+Build-Depends: debhelper-compat (= 13),
+               dh-sequence-cargo,
+               cargo,
+               rustc,
+               librust-rcgen-0.13+default-dev,
+               librust-time-0.3-dev
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/fdagorn/boringca
+
+Package: boringca
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Built-Using: ${cargo:Built-Using}
+Static-Built-Using: ${cargo:Static-Built-Using}
+Description: Quickly create a CA and issue child certificates
+ boringca is a small, self-contained command-line tool to create a root
+ Certificate Authority and issue server/client certificates signed by it
+ in a couple of commands, for local development, home lab and internal PKI
+ use. Not intended to replace a production CA/PKI system (step-ca,
+ easy-rsa, HashiCorp Vault PKI) for real-world deployments.
+ .
+ Two subcommands: "boringca init" creates ca.key/ca.crt under
+ ~/.boringca (or --dir/$BORINGCA_HOME), and "boringca issue <name>"
+ generates a key pair and certificate signed by that CA, with SAN and
+ extendedKeyUsage (server/client) support.
+ .
+ Written in Rust using rcgen (ring backend, ECDSA P-256 keys): all
+ certificate generation and signing happens in-process, with no runtime
+ dependency on the openssl binary or any other external tool. Built
+ entirely offline with the Debian dh-cargo buildsystem against the
+ rcgen/time crates packaged in the archive.
