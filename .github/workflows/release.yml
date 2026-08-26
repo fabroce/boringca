@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: boringca-linux-amd64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: boringca-linux-arm64
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            name: boringca-windows-amd64.exe
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: boringca-macos-amd64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: boringca-macos-arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cross-linkers (Linux runner only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          elif [ "${{ matrix.target }}" = "x86_64-pc-windows-gnu" ]; then
+            sudo apt-get install -y mingw-w64
+          fi
+
+      - name: Configure linker
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml << 'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+
+          [target.x86_64-pc-windows-gnu]
+          linker = "x86_64-w64-mingw32-gcc"
+          EOF
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp target/${{ matrix.target }}/release/boringca.exe ${{ matrix.name }}
+          else
+            cp target/${{ matrix.target }}/release/boringca ${{ matrix.name }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir release
+          find artifacts -type f -exec cp {} release/ \;
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
