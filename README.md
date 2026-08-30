@@ -1,5 +1,13 @@
 # boringca
 
+![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=flat&logo=rust&logoColor=white)
+![PKI](https://img.shields.io/badge/PKI-certificate--authority-informational)
+![TLS](https://img.shields.io/badge/TLS-self--signed-blueviolet)
+![Self-hosted](https://img.shields.io/badge/self--hosted-yes-success)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![GitHub stars](https://img.shields.io/github/stars/fabroce/boringca?style=social)
+![GitHub last commit](https://img.shields.io/github/last-commit/fabroce/boringca)
+![GitHub issues](https://img.shields.io/github/issues/fabroce/boringca)
 A tiny command-line tool to quickly create a root Certificate Authority and
 issue server/client certificates signed by it -- for local development, home
 lab and internal PKI use.
