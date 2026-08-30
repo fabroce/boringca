@@ -20,3 +20,23 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+
+  build-debian:
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [stable, testing]
+
+    runs-on: ubuntu-latest
+    container: debian:${{ matrix.release }}
+
+    steps:
+    - name: Install toolchain
+      run: |
+        apt-get update
+        apt-get install -y rustc cargo git
+    - uses: actions/checkout@v4
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
