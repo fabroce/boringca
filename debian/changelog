@@ -1,3 +1,9 @@
+boringca (1.0.1) stable; urgency=medium
+
+  * Real name
+
+ -- Fabrice Dagorn <fabrice@dagorn.fr>  Sat, 29 Aug 2026 08:55:41 +0200
+
 boringca (1.0.0) stable; urgency=low
 
   * Initial release
