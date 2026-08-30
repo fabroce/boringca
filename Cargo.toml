@@ -15,5 +15,5 @@ name = "boringca"
 path = "src/main.rs"
 
 [dependencies]
-rcgen = "0.13.2"
-time = "0.3"
+rcgen = "=0.13.2"
+time = "=0.3.37"
