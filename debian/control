@@ -4,6 +4,7 @@ Priority: optional
 Maintainer: Fabrice Dagorn <fabrice@dagorn.fr>
 Build-Depends: debhelper-compat (= 13),
                dh-sequence-cargo,
+               bash-completion,
                cargo,
                rustc,
                librust-rcgen-dev (>= 0.13.2),
