@@ -1,3 +1,9 @@
+boringca (2.0.0) stable; urgency=medium
+
+  * Install-trust parameter to put the CA in the system trust store
+
+ -- Fabrice Dagorn <fabrice@dagorn.fr>  Sun, 13 Sep 2026 11:13:32 +0200
+
 boringca (1.0.2) stable; urgency=medium
 
   * github builds

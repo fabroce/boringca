@@ -40,9 +40,10 @@ CA ready in /home/user/.boringca
   key:  /home/user/.boringca/ca.key
   cert: /home/user/.boringca/ca.crt
 
-To trust this CA on Debian/Ubuntu, run:
-    sudo cp /home/user/.boringca/ca.crt /usr/local/share/ca-certificates/boringca.crt
-    sudo update-ca-certificates
+To trust this CA system-wide, run:
+    boringca install-trust
+(it will ask for your password via sudo; see the README for manual steps
+ or unsupported distros)
 
 Run 'boringca <name>' to issue a certificate, e.g.:
     boringca nas.lan
@@ -68,6 +69,7 @@ as explicit subcommands with their full set of options:
 $ boringca init --cn "Home Lab CA" --days 7300
 $ boringca issue nas --san dns:nas.lan,ip:192.168.1.10
 $ boringca issue laptop --client --cn "user@laptop"
+$ boringca install-trust
 ```
 
 `boringca <name>` is exactly `boringca issue <name>` with every option left
@@ -75,13 +77,22 @@ at its default. Run `boringca --help` for the full option list.
 
 ### Trusting the CA
 
-Every time the CA is created, boringca prints the `update-ca-certificates`
-command to trust it system-wide on Debian/Ubuntu (the target `.crt` name
-under `/usr/local/share/ca-certificates/` is derived from the store
-directory's name, so certs from different `--dir` stores don't collide).
-On other systems, drop `ca.crt` wherever your OS/distribution expects
-locally-trusted CAs (e.g. `update-ca-trust` on Fedora/RHEL,
-`trust anchor` on Arch), or import it directly into your browser/OS
+Run `boringca install-trust` to add the CA to the system trust store. It
+detects which mechanism is present (`update-ca-certificates` on
+Debian/Ubuntu, `update-ca-trust` on Fedora/RHEL, or `trust` on Arch) and
+runs the required steps itself through `sudo`, prompting for a password
+as needed. The target `.crt` name under `/usr/local/share/ca-certificates/`
+(or the Fedora/RHEL equivalent) is derived from the store directory's
+name, so certs from different `--dir` stores don't collide.
+
+This is opt-in and explicit by design: `boringca` never touches the
+system trust store on its own just because it happens to be run as root
+(e.g. via `sudo boringca <name>` for an unrelated reason) -- only
+`install-trust` does, and only when you ask for it.
+
+If no known mechanism is found, `install-trust` fails with an error
+instead of guessing -- drop `ca.crt` wherever your OS/distribution
+expects locally-trusted CAs, or import it directly into your browser/OS
 trust store.
 
 ### Store layout

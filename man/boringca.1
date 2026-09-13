@@ -18,6 +18,10 @@ boringca \- quickly create a CA and issue child certificates
 [\fIOPTIONS\fR]
 .br
 .B boringca
+.B install\-trust
+[\fIOPTIONS\fR]
+.br
+.B boringca
 .B help
 .SH DESCRIPTION
 .B boringca
@@ -35,6 +39,9 @@ certificate for DNS name \fIname\fR signed by that CA, creating the CA
 first if it doesn't exist yet -- this is shorthand for \fBboringca
 issue\fR \fIname\fR with every option left at its default. The \fBinit\fR
 and \fBissue\fR subcommands below give full control over every option.
+\fBinstall\-trust\fR adds the CA to the system trust store; see
+.B TRUSTING THE CA
+below.
 .SH INIT OPTIONS
 .TP
 .BI \-\-cn " name"
@@ -76,6 +83,10 @@ Validity in days (default: 825).
 .TP
 .BI \-\-dir " path"
 CA store directory (default: \fB$BORINGCA_HOME\fR or \fI~/.boringca\fR).
+.SH INSTALL\-TRUST OPTIONS
+.TP
+.BI \-\-dir " path"
+CA store directory (default: \fB$BORINGCA_HOME\fR or \fI~/.boringca\fR).
 .SH FILES
 Under the CA store directory:
 .RS
@@ -98,27 +109,38 @@ Issued certificate.
 .B BORINGCA_HOME
 Default CA store directory, used when \fB\-\-dir\fR is not given.
 .SH TRUSTING THE CA
-Every time the CA is created, boringca prints the
+Run
+.B boringca install\-trust
+to add the CA to the system trust store. It detects which mechanism is
+present (
 .BR update\-ca\-certificates (8)
-command to trust it system-wide on Debian/Ubuntu:
-.RS
-.EX
-sudo cp <ca.crt> /usr/local/share/ca-certificates/<name>.crt
-sudo update-ca-certificates
-.EE
-.RE
-.I <name>
-is derived from the store directory's name, so certificates from
-different \fB\-\-dir\fR stores don't collide. On other distributions, place
-.I ca.crt
-wherever locally-trusted CAs are expected instead (e.g.
+on Debian/Ubuntu,
 .BR update\-ca\-trust (8)
-on Fedora/RHEL), or import it into your browser/OS trust store directly.
+on Fedora/RHEL, or
+.BR trust (1)
+on Arch) and runs the required steps through
+.BR sudo (8),
+prompting for a password as needed -- this never happens implicitly (e.g.
+merely because boringca itself is run as root); it is only ever done when
+\fBinstall\-trust\fR is invoked explicitly. The certificate file installed
+under
+.I /usr/local/share/ca-certificates/
+or
+.I /etc/pki/ca-trust/source/anchors/
+is named after the store directory, so certificates from different
+\fB\-\-dir\fR stores don't collide.
+.PP
+If no known mechanism is found, \fBinstall\-trust\fR fails with an error
+instead of guessing; place
+.I ca.crt
+wherever locally-trusted CAs are expected on your system, or import it
+into your browser/OS trust store directly.
 .SH EXAMPLES
 .EX
 boringca init --cn "Home Lab CA"
 boringca issue nas --san dns:nas.lan,ip:192.168.1.10
 boringca issue laptop --client --cn "fabrice@laptop"
+boringca install-trust
 .EE
 .SH AUTHOR
 Fabrice Dagorn <fabrice@dagorn.fr>

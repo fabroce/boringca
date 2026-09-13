@@ -13,7 +13,7 @@ use std::env;
 use std::fs;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
@@ -43,6 +43,7 @@ fn main() -> ExitCode {
         }
         Some("init") => cmd_init(&args[1..]),
         Some("issue") => cmd_issue(&args[1..]),
+        Some("install-trust") => cmd_install_trust(&args[1..]),
         Some(_) => quick_issue(&args),
     };
 
@@ -69,8 +70,9 @@ QUICK START:
         boringca nas.lan
 
 ADVANCED USAGE:
-    boringca init   [OPTIONS]          (Re)create the root CA explicitly
+    boringca init          [OPTIONS]   (Re)create the root CA explicitly
     boringca issue  <name> [OPTIONS]   Issue a certificate with full control
+    boringca install-trust [OPTIONS]   Trust the CA system-wide (uses sudo)
     boringca help
 
     "boringca <name>" above is shorthand for "boringca issue <name>" with
@@ -81,6 +83,9 @@ INIT OPTIONS:
     --days <n>        Validity in days                    [default: {ca_days}]
     --dir <path>      CA store directory                  [default: $BORINGCA_HOME or ~/.boringca]
     --force           Overwrite an existing CA in --dir
+
+INSTALL-TRUST OPTIONS:
+    --dir <path>      CA store directory                  [default: $BORINGCA_HOME or ~/.boringca]
 
 ISSUE OPTIONS:
     <name>            Short name for the certificate (used for file names)
@@ -97,6 +102,7 @@ EXAMPLES:
     boringca init --cn "Home Lab CA"
     boringca issue nas --san dns:nas.lan,ip:192.168.1.10
     boringca issue laptop --client --cn "user@laptop"
+    boringca install-trust
 
 STORE LAYOUT (under --dir):
     ca.key, ca.crt, ca.cn   root CA key, certificate and Common Name
@@ -241,13 +247,10 @@ fn create_ca(dir: &Path, cn: &str, days: u32) -> Result<(), String> {
     println!("  key:  {}", ca_key_path.display());
     println!("  cert: {}", ca_crt_path.display());
     println!();
-    println!("To trust this CA on Debian/Ubuntu, run:");
-    println!(
-        "    sudo cp {} /usr/local/share/ca-certificates/{}",
-        ca_crt_path.display(),
-        ca_trust_filename(dir)
-    );
-    println!("    sudo update-ca-certificates");
+    println!("To trust this CA system-wide, run:");
+    println!("    boringca install-trust");
+    println!("(it will ask for your password via sudo; see the README for manual steps");
+    println!(" or unsupported distros)");
     Ok(())
 }
 
@@ -327,6 +330,116 @@ fn cmd_init(raw: &[String]) -> Result<(), String> {
     create_ca(&dir, &cn, days)?;
     println!();
     println!("Next: boringca <name>   (issues a certificate for DNS name <name>)");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// boringca install-trust [OPTIONS]
+//
+// Explicit, opt-in system trust installation: this is never triggered
+// implicitly by detecting an elevated UID (running "boringca <name>" under
+// sudo for an unrelated reason must never have the side effect of touching
+// the system trust store). It always goes through `sudo` itself instead,
+// so the user doesn't need to already be root to ask for this -- mirroring
+// how `mkcert -install` behaves.
+// ---------------------------------------------------------------------
+
+/// One of the OS-specific ways to add a locally-trusted CA, matched against
+/// what's actually installed on this machine (see `detect_trust_method`).
+enum TrustMethod {
+    /// Debian/Ubuntu: drop the cert under /usr/local/share/ca-certificates/
+    /// then run update-ca-certificates.
+    DebianLike { target: PathBuf },
+    /// Fedora/RHEL: drop the cert under /etc/pki/ca-trust/source/anchors/
+    /// then run update-ca-trust extract.
+    FedoraLike { target: PathBuf },
+    /// Arch (p11-kit's `trust`): a single command does both steps.
+    ArchLike,
+}
+
+/// Look up `bin` in $PATH without spawning a subprocess, the same way a
+/// shell would -- used to pick which trust mechanism is actually present.
+fn find_in_path(bin: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path).map(|dir| dir.join(bin)).find(|full| full.is_file())
+}
+
+fn detect_trust_method(filename: &str) -> Option<TrustMethod> {
+    if find_in_path("update-ca-certificates").is_some() {
+        Some(TrustMethod::DebianLike {
+            target: PathBuf::from("/usr/local/share/ca-certificates").join(filename),
+        })
+    } else if find_in_path("update-ca-trust").is_some() {
+        Some(TrustMethod::FedoraLike {
+            target: PathBuf::from("/etc/pki/ca-trust/source/anchors").join(filename),
+        })
+    } else if find_in_path("trust").is_some() {
+        Some(TrustMethod::ArchLike)
+    } else {
+        None
+    }
+}
+
+/// Run a command as root, always going through `sudo` (even if we're
+/// already root -- `sudo` lets that through without a password prompt on
+/// every setup we care about) so the user is never required to have
+/// already elevated just to ask boringca to install trust.
+fn run_privileged(program: &str, args: &[&str]) -> Result<(), String> {
+    println!("    sudo {program} {}", args.join(" "));
+    let status = Command::new("sudo")
+        .arg(program)
+        .args(args)
+        .status()
+        .map_err(|e| format!("failed to run 'sudo {program}': {e}"))?;
+    if !status.success() {
+        return Err(format!("'sudo {program}' exited with {status}"));
+    }
+    Ok(())
+}
+
+fn cmd_install_trust(raw: &[String]) -> Result<(), String> {
+    let args = parse_args(raw, &["dir"], &[])?;
+    let dir = ca_dir(args.flags.get("dir"))?;
+    let ca_crt_path = dir.join("ca.crt");
+    if !ca_crt_path.exists() {
+        return Err(format!(
+            "no CA found in {} -- run 'boringca init' first (or pass --dir)",
+            dir.display()
+        ));
+    }
+
+    let filename = ca_trust_filename(&dir);
+    let method = detect_trust_method(&filename).ok_or_else(|| {
+        format!(
+            "couldn't find a known trust mechanism (update-ca-certificates, update-ca-trust or \
+             trust) on this system -- see the README to install {} into your OS/browser trust \
+             store manually",
+            ca_crt_path.display()
+        )
+    })?;
+
+    println!("Installing {} into the system trust store ...", ca_crt_path.display());
+    match method {
+        TrustMethod::DebianLike { target } => {
+            let target_str = target.to_str().ok_or("--dir contains invalid UTF-8")?;
+            let src_str = ca_crt_path.to_str().ok_or("--dir contains invalid UTF-8")?;
+            run_privileged("cp", &[src_str, target_str])?;
+            run_privileged("update-ca-certificates", &[])?;
+        }
+        TrustMethod::FedoraLike { target } => {
+            let target_str = target.to_str().ok_or("--dir contains invalid UTF-8")?;
+            let src_str = ca_crt_path.to_str().ok_or("--dir contains invalid UTF-8")?;
+            run_privileged("cp", &[src_str, target_str])?;
+            run_privileged("update-ca-trust", &["extract"])?;
+        }
+        TrustMethod::ArchLike => {
+            let src_str = ca_crt_path.to_str().ok_or("--dir contains invalid UTF-8")?;
+            run_privileged("trust", &["anchor", "--store", src_str])?;
+        }
+    }
+
+    println!();
+    println!("CA trusted system-wide.");
     Ok(())
 }
 
