@@ -16,6 +16,7 @@ Homepage: https://github.com/fdagorn/boringca
 Package: boringca
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Suggests: libnss3-tools
 Built-Using: ${cargo:Built-Using}
 Static-Built-Using: ${cargo:Static-Built-Using}
 Description: Quickly create a CA and issue child certificates
@@ -25,10 +26,11 @@ Description: Quickly create a CA and issue child certificates
  use. Not intended to replace a production CA/PKI system (step-ca,
  easy-rsa, HashiCorp Vault PKI) for real-world deployments.
  .
- Two subcommands: "boringca init" creates ca.key/ca.crt under
- ~/.boringca (or --dir/$BORINGCA_HOME), and "boringca issue <name>"
- generates a key pair and certificate signed by that CA, with SAN and
- extendedKeyUsage (server/client) support.
+ "boringca init" creates ca.key/ca.crt under ~/.boringca (or
+ --dir/$BORINGCA_HOME), "boringca issue <name>" generates a key pair and
+ certificate signed by that CA, with SAN and extendedKeyUsage
+ (server/client) support, and "boringca install-trust" trusts the CA
+ system-wide and, best-effort, in Firefox/Chromium (libnss3-tools).
  .
  Written in Rust using rcgen (ring backend, ECDSA P-256 keys): all
  certificate generation and signing happens in-process, with no runtime

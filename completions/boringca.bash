@@ -1,20 +1,19 @@
 # bash completion for boringca
 #
 # Hand-written, no dependency on the `bash-completion` package's helper
-# functions so it works in a plain bash too. Install it either way:
+# functions so it works in a plain bash too. The Debian package installs
+# this file automatically (see debian/boringca.bash-completion); on any
+# other system, drop it into /usr/share/bash-completion/completions/boringca
+# or source it straight from your shell startup file, e.g.:
 #
-#   boringca completions bash | sudo tee /usr/share/bash-completion/completions/boringca
-#
-# or source it straight from your shell startup file:
-#
-#   echo 'eval "$(boringca completions bash)"' >> ~/.bashrc
+#   echo 'eval "$(cat completions/boringca.bash)"' >> ~/.bashrc
 
 _boringca() {
     local cur prev
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local subcommands="init issue install-trust completions help"
+    local subcommands="init issue install-trust help"
 
     # Find the subcommand, i.e. the first word after "boringca" that isn't
     # itself an option -- everything else (including the quick
@@ -49,7 +48,6 @@ _boringca() {
         init) opts="--cn --days --dir --force" ;;
         issue) opts="--cn --san --server --client --both --days --dir" ;;
         install-trust) opts="--dir" ;;
-        completions) opts="bash" ;;
         "") opts="$subcommands -h --help" ;;
         *) opts="--cn --san --server --client --both --days --dir" ;;
     esac

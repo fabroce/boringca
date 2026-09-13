@@ -1,3 +1,9 @@
+boringca (4.0.0) stable; urgency=medium
+
+  * Trust on browsers (Firefox/Chromium)
+
+ -- Fabrice Dagorn <fabrice@dagorn.fr>  Sun, 13 Sep 2026 13:52:01 +0200
+
 boringca (3.0.0) stable; urgency=medium
 
   * Bash completions

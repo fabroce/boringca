@@ -70,6 +70,15 @@ $ boringca init --cn "Home Lab CA" --days 7300
 $ boringca issue nas --san dns:nas.lan,ip:192.168.1.10
 $ boringca issue laptop --client --cn "user@laptop"
 $ boringca install-trust
+Installing /home/user/.boringca/ca.crt into the system trust store ...
+    sudo cp /home/user/.boringca/ca.crt /usr/local/share/ca-certificates/boringca.crt
+    sudo update-ca-certificates
+
+CA trusted system-wide.
+
+Browser trust stores (best effort, no sudo needed):
+  Firefox (/home/user/.mozilla/firefox/xxxxxxxx.default): installed
+  Chromium/Chrome (~/.pki/nssdb): installed
 ```
 
 `boringca <name>` is exactly `boringca issue <name>` with every option left
@@ -90,10 +99,20 @@ system trust store on its own just because it happens to be run as root
 (e.g. via `sudo boringca <name>` for an unrelated reason) -- only
 `install-trust` does, and only when you ask for it.
 
-If no known mechanism is found, `install-trust` fails with an error
+If no known mechanism is found, the system-wide step fails with an error
 instead of guessing -- drop `ca.crt` wherever your OS/distribution
 expects locally-trusted CAs, or import it directly into your browser/OS
 trust store.
+
+`install-trust` also tries, best-effort, to trust the CA in Firefox and
+Chromium-based browsers: on Linux these keep their own NSS certificate
+databases (a `cert9.db` per Firefox profile, a shared one for
+Chromium/Chrome under `~/.pki/nssdb`) and never consult the system trust
+store at all. This part needs `certutil` (Debian/Ubuntu: `libnss3-tools`)
+and runs entirely as your user, no `sudo` involved. Unlike the
+system-wide step, a failure here (missing `certutil`, no Firefox profile,
+...) is reported per browser rather than failing the whole command --
+restart the browser afterwards for it to notice the new CA.
 
 ### Store layout
 

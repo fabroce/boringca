@@ -130,11 +130,31 @@ or
 is named after the store directory, so certificates from different
 \fB\-\-dir\fR stores don't collide.
 .PP
-If no known mechanism is found, \fBinstall\-trust\fR fails with an error
+If no known mechanism is found, the system-wide step fails with an error
 instead of guessing; place
 .I ca.crt
 wherever locally-trusted CAs are expected on your system, or import it
 into your browser/OS trust store directly.
+.PP
+\fBinstall\-trust\fR also tries, best-effort, to trust the CA in Firefox
+and Chromium-based browsers. On Linux these never consult the system
+trust store above -- each keeps its own NSS certificate database instead
+(a
+.I cert9.db
+per Firefox profile, found via
+.IR ~/.mozilla/firefox/profiles.ini ,
+and one shared by Chromium/Chrome under
+.IR ~/.pki/nssdb ).
+This step needs
+.BR certutil (1)
+(Debian/Ubuntu package
+.BR libnss3-tools )
+and runs entirely as the invoking user, with no
+.BR sudo (8)
+involved. A failure here (missing
+.BR certutil ,
+no Firefox profile, ...) is reported per browser and does not fail the
+command -- restart the browser afterwards for it to notice the new CA.
 .SH EXAMPLES
 .EX
 boringca init --cn "Home Lab CA"

@@ -440,7 +440,146 @@ fn cmd_install_trust(raw: &[String]) -> Result<(), String> {
 
     println!();
     println!("CA trusted system-wide.");
+
+    // Firefox and Chromium-based browsers on Linux ignore the system trust
+    // store and keep their own NSS certificate databases instead, so the
+    // steps above never reach them. This part is best-effort: it needs
+    // `certutil` (nss's own tool) and a guess at where each browser keeps
+    // its database, neither of which is guaranteed to be there -- unlike
+    // the system trust store above, a failure here is reported, not fatal.
+    println!();
+    println!("Browser trust stores (best effort, no sudo needed):");
+    for line in install_browser_trust(&ca_crt_path, &nss_nickname(&dir)) {
+        println!("  {line}");
+    }
     Ok(())
+}
+
+/// Nickname used for the CA in NSS certificate databases: the CA's Common
+/// Name for readability, plus the same store-derived stem `install-trust`
+/// uses for the system copy, so two different `--dir` stores (even with
+/// the same default CN) never get treated as the same already-trusted
+/// entry.
+fn nss_nickname(dir: &Path) -> String {
+    let cn = fs::read_to_string(dir.join("ca.cn"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| DEFAULT_CA_CN.to_string());
+    let stem = ca_trust_filename(dir);
+    let stem = stem.strip_suffix(".crt").unwrap_or(&stem);
+    format!("{cn} ({stem})")
+}
+
+/// Add `ca_crt_path` to one NSS certificate database (`sql:<nss_dir>`),
+/// trusted for issuing server certs ("C,,"). Returns what happened so the
+/// caller can report it; a missing database or a `certutil` failure is
+/// communicated through `Err`, not a hard error for the whole command.
+fn nss_install(nss_dir: &Path, ca_crt_path: &Path, nickname: &str) -> Result<&'static str, String> {
+    if !nss_dir.is_dir() {
+        return Err("no database found".to_string());
+    }
+    let db_arg = format!("sql:{}", nss_dir.display());
+
+    let already_trusted = Command::new("certutil")
+        .args(["-d", &db_arg, "-L", "-n", nickname])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false);
+    if already_trusted {
+        return Ok("already trusted");
+    }
+
+    let status = Command::new("certutil")
+        .args(["-d", &db_arg, "-A", "-t", "C,,", "-n", nickname, "-i"])
+        .arg(ca_crt_path)
+        .status()
+        .map_err(|e| format!("failed to run certutil: {e}"))?;
+    if status.success() {
+        Ok("installed")
+    } else {
+        Err(format!("certutil exited with {status}"))
+    }
+}
+
+/// Parse ~/.mozilla/firefox/profiles.ini (the same format Firefox itself
+/// reads) just enough to list each profile's directory -- no ini crate,
+/// this is the one section shape ([Profile0], [Profile1], ...) we need.
+fn find_firefox_profiles(home: &str) -> Vec<PathBuf> {
+    let firefox_dir = Path::new(home).join(".mozilla/firefox");
+    let Ok(content) = fs::read_to_string(firefox_dir.join("profiles.ini")) else {
+        return Vec::new();
+    };
+
+    let mut profiles = Vec::new();
+    let mut in_profile = false;
+    let mut is_relative = true;
+    let mut path: Option<String> = None;
+
+    let flush = |in_profile: bool, is_relative: bool, path: &mut Option<String>, out: &mut Vec<PathBuf>| {
+        if in_profile {
+            if let Some(p) = path.take() {
+                out.push(if is_relative { firefox_dir.join(&p) } else { PathBuf::from(&p) });
+            }
+        }
+    };
+
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(section) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            flush(in_profile, is_relative, &mut path, &mut profiles);
+            in_profile = section.starts_with("Profile");
+            is_relative = true;
+            continue;
+        }
+        if !in_profile {
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("Path=") {
+            path = Some(v.to_string());
+        } else if let Some(v) = line.strip_prefix("IsRelative=") {
+            is_relative = v.trim() != "0";
+        }
+    }
+    flush(in_profile, is_relative, &mut path, &mut profiles);
+    profiles
+}
+
+fn install_browser_trust(ca_crt_path: &Path, nickname: &str) -> Vec<String> {
+    if find_in_path("certutil").is_none() {
+        return vec![
+            "certutil not found -- install 'libnss3-tools' (Debian/Ubuntu) to also trust \
+             Firefox/Chromium, skipped"
+                .to_string(),
+        ];
+    }
+    let Ok(home) = env::var("HOME") else {
+        return vec!["cannot determine home directory, skipped".to_string()];
+    };
+
+    let mut lines = Vec::new();
+
+    let profiles = find_firefox_profiles(&home);
+    if profiles.is_empty() {
+        lines.push("Firefox: no profile found, skipped".to_string());
+    } else {
+        for profile in profiles {
+            let label = format!("Firefox ({})", profile.display());
+            match nss_install(&profile, ca_crt_path, nickname) {
+                Ok(status) => lines.push(format!("{label}: {status}")),
+                Err(e) => lines.push(format!("{label}: skipped -- {e}")),
+            }
+        }
+    }
+
+    // Chromium, Chrome and most other Chromium-based browsers share this
+    // one NSS database on Linux.
+    let nssdb = Path::new(&home).join(".pki/nssdb");
+    let label = "Chromium/Chrome (~/.pki/nssdb)";
+    match nss_install(&nssdb, ca_crt_path, nickname) {
+        Ok(status) => lines.push(format!("{label}: {status}")),
+        Err(e) => lines.push(format!("{label}: skipped -- {e}")),
+    }
+
+    lines
 }
 
 // ---------------------------------------------------------------------
