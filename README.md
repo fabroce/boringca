@@ -114,6 +114,29 @@ system-wide step, a failure here (missing `certutil`, no Firefox profile,
 ...) is reported per browser rather than failing the whole command --
 restart the browser afterwards for it to notice the new CA.
 
+### Shell completion
+
+A bash completion script is shipped in
+[`completions/boringca.bash`](completions/boringca.bash) (subcommands and
+their options, `--dir` completes to directories). The Debian package
+installs it automatically (`debian/boringca.bash-completion`), so `<TAB>`
+completion works out of the box after `dpkg -i` -- nothing to run or
+source by hand.
+
+Outside of the Debian package, copy or symlink the file yourself:
+
+```console
+$ sudo cp completions/boringca.bash /usr/share/bash-completion/completions/boringca
+```
+
+or source it from your shell startup file:
+
+```console
+$ echo 'eval "$(cat /path/to/completions/boringca.bash)"' >> ~/.bashrc
+```
+
+Only bash is currently supported.
+
 ### Store layout
 
 Everything lives under one directory (`--dir`, or `$BORINGCA_HOME`, default

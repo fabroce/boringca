@@ -1,4 +1,4 @@
-.TH BORINGCA 1 "August 2026" "boringca 1.0" "User Commands"
+.TH BORINGCA 1 "September 2026" "boringca 4.0.2" "User Commands"
 .SH NAME
 boringca \- quickly create a CA and issue child certificates
 .SH SYNOPSIS
@@ -155,6 +155,24 @@ involved. A failure here (missing
 .BR certutil ,
 no Firefox profile, ...) is reported per browser and does not fail the
 command -- restart the browser afterwards for it to notice the new CA.
+.SH SHELL COMPLETION
+A bash completion script is shipped in
+.IR completions/boringca.bash .
+The Debian package installs it automatically (via
+.BR debhelper (7)'s
+.BR dh_bash-completion (1),
+see
+.IR debian/boringca.bash\-completion ),
+so
+.B TAB
+completion of subcommands and their options works out of the box after
+installing the
+.B .deb
+package -- nothing to run or source by hand. Outside of that package,
+copy or symlink the file into
+.I /usr/share/bash-completion/completions/boringca
+yourself, or source it from your shell startup file. Only bash is
+currently supported.
 .SH EXAMPLES
 .EX
 boringca init --cn "Home Lab CA"
