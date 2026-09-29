@@ -184,22 +184,34 @@ fn parse_u32(flags: &std::collections::HashMap<String, String>, name: &str, defa
     }
 }
 
+/// Write a PEM-encoded private key to `path`, readable by its owner only.
+///
+/// The file is created with mode 600 from the start (and an existing file
+/// is chmod'ed through its handle before anything is written), so the key
+/// is never on disk with looser permissions, even briefly.
 #[cfg(unix)]
-fn restrict_permissions(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .map_err(|e| format!("failed to chmod 600 {}: {e}", path.display()))
+fn write_private_pem(path: &Path, pem: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    // mode() only applies when the file is created: tighten a pre-existing
+    // one too (it has just been truncated, so nothing leaks meanwhile).
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("failed to chmod 600 {}: {e}", path.display()))?;
+    file.write_all(pem.as_bytes())
+        .map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
 #[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> Result<(), String> {
-    Ok(())
-}
-
-/// Write a PEM-encoded private key to `path` and restrict its permissions.
 fn write_private_pem(path: &Path, pem: &str) -> Result<(), String> {
-    fs::write(path, pem).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
-    restrict_permissions(path)
+    fs::write(path, pem).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
 fn common_name_dn(cn: &str) -> DistinguishedName {
