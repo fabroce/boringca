@@ -244,7 +244,8 @@ fn create_ca(dir: &Path, cn: &str, days: u32) -> Result<(), String> {
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     let now = OffsetDateTime::now_utc();
     params.not_before = now - Duration::days(1); // tolerate a bit of clock skew
-    params.not_after = now + Duration::days(i64::from(days));
+    // Count from not_before so the total validity is exactly `days`.
+    params.not_after = params.not_before + Duration::days(i64::from(days));
 
     let ca_cert = params
         .self_signed(&ca_key)
@@ -681,7 +682,9 @@ fn cmd_issue(raw: &[String]) -> Result<(), String> {
     leaf_params.use_authority_key_identifier_extension = true;
     let now = OffsetDateTime::now_utc();
     leaf_params.not_before = now - Duration::days(1);
-    leaf_params.not_after = now + Duration::days(i64::from(days));
+    // Count from not_before, not from now: Apple platforms reject TLS server
+    // certs whose notAfter - notBefore exceeds 825 days (DEFAULT_LEAF_DAYS).
+    leaf_params.not_after = leaf_params.not_before + Duration::days(i64::from(days));
 
     let leaf_cert = leaf_params
         .signed_by(&leaf_key, &ca_cert, &ca_key)
