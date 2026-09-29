@@ -37,7 +37,7 @@ fn main() -> ExitCode {
     // anyone who wants more control (see --help).
     let result = match args.first().map(String::as_str) {
         None => quick_start(),
-        Some("-h") | Some("--help") => {
+        Some("-h") | Some("--help") | Some("help") => {
             print_help();
             return ExitCode::SUCCESS;
         }
