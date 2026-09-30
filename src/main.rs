@@ -313,12 +313,12 @@ fn quick_start() -> Result<(), String> {
 // ---------------------------------------------------------------------
 
 fn quick_issue(raw: &[String]) -> Result<(), String> {
-    // Peek at --dir so the CA (if missing) is created in the same store
-    // "issue" below will use, then delegate to it for everything else.
-    let peek = parse_args(raw, &["cn", "san", "days", "dir"], &["server", "client", "both"])?;
-    let dir = ca_dir(peek.flags.get("dir"))?;
-    ensure_ca(&dir)?;
-    cmd_issue(raw)
+    // Validate the whole command line first, so a typo (bad name, bad
+    // --days, bad --san, ...) never leaves a freshly created CA behind;
+    // only then create the CA (if missing) in the store "issue" will use.
+    let req = parse_issue_args(raw)?;
+    ensure_ca(&req.dir)?;
+    issue(req)
 }
 
 // ---------------------------------------------------------------------
@@ -599,7 +599,20 @@ fn install_browser_trust(ca_crt_path: &Path, nickname: &str) -> Vec<String> {
 // boringca issue <name>
 // ---------------------------------------------------------------------
 
-fn cmd_issue(raw: &[String]) -> Result<(), String> {
+/// Everything "issue" needs from the command line, parsed and validated
+/// up front -- before any file is read or written.
+struct IssueRequest {
+    name: String,
+    dir: PathBuf,
+    cn: String,
+    days: u32,
+    eku: Vec<ExtendedKeyUsagePurpose>,
+    eku_label: &'static str,
+    san: String,
+    sans: Vec<SanType>,
+}
+
+fn parse_issue_args(raw: &[String]) -> Result<IssueRequest, String> {
     let args = parse_args(
         raw,
         &["cn", "san", "days", "dir"],
@@ -614,6 +627,31 @@ fn cmd_issue(raw: &[String]) -> Result<(), String> {
     validate_name(&name)?;
 
     let dir = ca_dir(args.flags.get("dir"))?;
+    let cn = args.flags.get("cn").cloned().unwrap_or_else(|| name.clone());
+    let days = parse_u32(&args.flags, "days", DEFAULT_LEAF_DAYS)?;
+
+    let (eku, eku_label) = match (args.switches.contains("client"), args.switches.contains("both")) {
+        (_, true) => (
+            vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth],
+            "serverAuth,clientAuth",
+        ),
+        (true, false) => (vec![ExtendedKeyUsagePurpose::ClientAuth], "clientAuth"),
+        (false, false) => (vec![ExtendedKeyUsagePurpose::ServerAuth], "serverAuth"),
+    };
+
+    let san = args.flags.get("san").cloned().unwrap_or_else(|| format!("dns:{cn}"));
+    let sans = parse_sans(&san)?;
+
+    Ok(IssueRequest { name, dir, cn, days, eku, eku_label, san, sans })
+}
+
+fn cmd_issue(raw: &[String]) -> Result<(), String> {
+    issue(parse_issue_args(raw)?)
+}
+
+fn issue(req: IssueRequest) -> Result<(), String> {
+    let IssueRequest { name, dir, cn, days, eku, eku_label, san, sans } = req;
+
     let ca_key_path = dir.join("ca.key");
     let ca_cn_path = dir.join("ca.cn");
     if !ca_key_path.exists() {
@@ -647,21 +685,6 @@ fn cmd_issue(raw: &[String]) -> Result<(), String> {
     let ca_cert = ca_params
         .self_signed(&ca_key)
         .map_err(|e| format!("failed to reconstruct CA certificate: {e}"))?;
-
-    let cn = args.flags.get("cn").cloned().unwrap_or_else(|| name.clone());
-    let days = parse_u32(&args.flags, "days", DEFAULT_LEAF_DAYS)?;
-
-    let (eku, eku_label) = match (args.switches.contains("client"), args.switches.contains("both")) {
-        (_, true) => (
-            vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth],
-            "serverAuth,clientAuth",
-        ),
-        (true, false) => (vec![ExtendedKeyUsagePurpose::ClientAuth], "clientAuth"),
-        (false, false) => (vec![ExtendedKeyUsagePurpose::ServerAuth], "serverAuth"),
-    };
-
-    let san = args.flags.get("san").cloned().unwrap_or_else(|| format!("dns:{cn}"));
-    let sans = parse_sans(&san)?;
 
     let key_path = dir.join("private").join(format!("{name}.key"));
     let crt_path = dir.join("certs").join(format!("{name}.crt"));
