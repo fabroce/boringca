@@ -177,11 +177,34 @@ fn ca_dir(explicit: Option<&String>) -> Result<PathBuf, String> {
     Ok(Path::new(&home).join(".boringca"))
 }
 
-fn parse_u32(flags: &std::collections::HashMap<String, String>, name: &str, default: u32) -> Result<u32, String> {
-    match flags.get(name) {
-        Some(v) => v.parse::<u32>().map_err(|_| format!("--{name} must be a positive integer, got '{v}'")),
-        None => Ok(default),
-    }
+/// Parse --days: a positive number of days whose validity period can
+/// actually be represented (see `validity_period`).
+fn parse_days(flags: &std::collections::HashMap<String, String>, default: u32) -> Result<u32, String> {
+    let days = match flags.get("days") {
+        Some(v) => v
+            .parse::<u32>()
+            .ok()
+            .filter(|&d| d > 0)
+            .ok_or_else(|| format!("--days must be a positive integer, got '{v}'"))?,
+        None => default,
+    };
+    validity_period(days)?;
+    Ok(days)
+}
+
+/// Compute (not_before, not_after) for a certificate valid `days` days.
+///
+/// not_before is backdated one day to tolerate a bit of clock skew, and
+/// not_after counts from it so the total validity is exactly `days` (Apple
+/// platforms reject TLS server certs whose notAfter - notBefore exceeds
+/// 825 days, DEFAULT_LEAF_DAYS). Fails instead of overflowing when the
+/// end date would be past what can be represented (year 9999).
+fn validity_period(days: u32) -> Result<(OffsetDateTime, OffsetDateTime), String> {
+    let not_before = OffsetDateTime::now_utc() - Duration::days(1);
+    let not_after = not_before
+        .checked_add(Duration::days(i64::from(days)))
+        .ok_or_else(|| format!("--days {days} is too large (the certificate would expire after year 9999)"))?;
+    Ok((not_before, not_after))
 }
 
 /// Write a PEM-encoded private key to `path`, readable by its owner only.
@@ -242,10 +265,7 @@ fn create_ca(dir: &Path, cn: &str, days: u32) -> Result<(), String> {
     params.distinguished_name = common_name_dn(cn);
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    let now = OffsetDateTime::now_utc();
-    params.not_before = now - Duration::days(1); // tolerate a bit of clock skew
-    // Count from not_before so the total validity is exactly `days`.
-    params.not_after = params.not_before + Duration::days(i64::from(days));
+    (params.not_before, params.not_after) = validity_period(days)?;
 
     let ca_cert = params
         .self_signed(&ca_key)
@@ -329,7 +349,7 @@ fn cmd_init(raw: &[String]) -> Result<(), String> {
     let args = parse_args(raw, &["cn", "days", "dir"], &["force"])?;
     let dir = ca_dir(args.flags.get("dir"))?;
     let cn = args.flags.get("cn").cloned().unwrap_or_else(|| DEFAULT_CA_CN.to_string());
-    let days = parse_u32(&args.flags, "days", DEFAULT_CA_DAYS)?;
+    let days = parse_days(&args.flags, DEFAULT_CA_DAYS)?;
     let force = args.switches.contains("force");
 
     if (dir.join("ca.key").exists() || dir.join("ca.crt").exists()) && !force {
@@ -628,7 +648,7 @@ fn parse_issue_args(raw: &[String]) -> Result<IssueRequest, String> {
 
     let dir = ca_dir(args.flags.get("dir"))?;
     let cn = args.flags.get("cn").cloned().unwrap_or_else(|| name.clone());
-    let days = parse_u32(&args.flags, "days", DEFAULT_LEAF_DAYS)?;
+    let days = parse_days(&args.flags, DEFAULT_LEAF_DAYS)?;
 
     let (eku, eku_label) = match (args.switches.contains("client"), args.switches.contains("both")) {
         (_, true) => (
@@ -703,11 +723,7 @@ fn issue(req: IssueRequest) -> Result<(), String> {
     leaf_params.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
     leaf_params.extended_key_usages = eku;
     leaf_params.use_authority_key_identifier_extension = true;
-    let now = OffsetDateTime::now_utc();
-    leaf_params.not_before = now - Duration::days(1);
-    // Count from not_before, not from now: Apple platforms reject TLS server
-    // certs whose notAfter - notBefore exceeds 825 days (DEFAULT_LEAF_DAYS).
-    leaf_params.not_after = leaf_params.not_before + Duration::days(i64::from(days));
+    (leaf_params.not_before, leaf_params.not_after) = validity_period(days)?;
 
     let leaf_cert = leaf_params
         .signed_by(&leaf_key, &ca_cert, &ca_key)
