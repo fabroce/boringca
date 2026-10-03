@@ -510,6 +510,36 @@ fn nss_nickname(dir: &Path) -> String {
     format!("{cn} ({stem})")
 }
 
+/// Base64 bodies of every PEM block in `pem`, whitespace removed, so two
+/// encodings of the same certificate compare equal whatever the line
+/// wrapping.
+fn pem_bodies(pem: &str) -> Vec<String> {
+    let mut bodies = Vec::new();
+    let mut current: Option<String> = None;
+    for line in pem.lines().map(str::trim) {
+        if line.starts_with("-----BEGIN ") {
+            current = Some(String::new());
+        } else if line.starts_with("-----END ") {
+            bodies.extend(current.take());
+        } else if let Some(body) = current.as_mut() {
+            body.push_str(line);
+        }
+    }
+    bodies
+}
+
+/// Certificates (as PEM bodies) stored under `nickname` in an NSS database;
+/// empty if there are none.
+fn nss_certs_named(db_arg: &str, nickname: &str) -> Vec<String> {
+    Command::new("certutil")
+        .args(["-d", db_arg, "-L", "-n", nickname, "-a"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| pem_bodies(&String::from_utf8_lossy(&out.stdout)))
+        .unwrap_or_default()
+}
+
 /// Add `ca_crt_path` to one NSS certificate database (`sql:<nss_dir>`),
 /// trusted for issuing server certs ("C,,"). Returns what happened so the
 /// caller can report it; a missing database or a `certutil` failure is
@@ -520,13 +550,29 @@ fn nss_install(nss_dir: &Path, ca_crt_path: &Path, nickname: &str) -> Result<&'s
     }
     let db_arg = format!("sql:{}", nss_dir.display());
 
-    let already_trusted = Command::new("certutil")
-        .args(["-d", &db_arg, "-L", "-n", nickname])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false);
-    if already_trusted {
+    let ours = fs::read_to_string(ca_crt_path)
+        .map_err(|e| format!("failed to read {}: {e}", ca_crt_path.display()))?;
+    let ours = pem_bodies(&ours)
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("{} is not a PEM certificate", ca_crt_path.display()))?;
+
+    // The nickname only identifies the store (CN + directory name), not the
+    // CA itself: after "init --force" in the same store it still points at
+    // the previous CA. Compare the actual certificates, and drop a previous
+    // CA rather than leaving it trusted next to the new one.
+    let existing = nss_certs_named(&db_arg, nickname);
+    if existing.contains(&ours) {
         return Ok("already trusted");
+    }
+    for _ in 0..existing.len() {
+        let status = Command::new("certutil")
+            .args(["-d", &db_arg, "-D", "-n", nickname])
+            .status()
+            .map_err(|e| format!("failed to run certutil: {e}"))?;
+        if !status.success() {
+            return Err(format!("failed to remove the previous CA, certutil exited with {status}"));
+        }
     }
 
     let status = Command::new("certutil")
@@ -534,11 +580,10 @@ fn nss_install(nss_dir: &Path, ca_crt_path: &Path, nickname: &str) -> Result<&'s
         .arg(ca_crt_path)
         .status()
         .map_err(|e| format!("failed to run certutil: {e}"))?;
-    if status.success() {
-        Ok("installed")
-    } else {
-        Err(format!("certutil exited with {status}"))
+    if !status.success() {
+        return Err(format!("certutil exited with {status}"));
     }
+    Ok(if existing.is_empty() { "installed" } else { "installed (replaced a previous CA from this store)" })
 }
 
 /// Parse ~/.mozilla/firefox/profiles.ini (the same format Firefox itself
