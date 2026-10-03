@@ -112,9 +112,9 @@ Default CA store directory, used when \fB\-\-dir\fR is not given.
 Run
 .B boringca install\-trust
 to add the CA to the system trust store. It detects which mechanism is
-present (
+present from the distribution's trust anchors directory (
 .BR update\-ca\-certificates (8)
-on Debian/Ubuntu,
+on Debian/Ubuntu and openSUSE,
 .BR update\-ca\-trust (8)
 on Fedora/RHEL, or
 .BR trust (1)
@@ -124,9 +124,10 @@ prompting for a password as needed -- this never happens implicitly (e.g.
 merely because boringca itself is run as root); it is only ever done when
 \fBinstall\-trust\fR is invoked explicitly. The certificate file installed
 under
-.I /usr/local/share/ca-certificates/
-or
+.IR /usr/local/share/ca-certificates/ ,
 .I /etc/pki/ca-trust/source/anchors/
+or
+.I /etc/pki/trust/anchors/
 is named after the store directory, so certificates from different
 \fB\-\-dir\fR stores don't collide.
 .PP

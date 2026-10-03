@@ -87,12 +87,14 @@ at its default. Run `boringca --help` for the full option list.
 ### Trusting the CA
 
 Run `boringca install-trust` to add the CA to the system trust store. It
-detects which mechanism is present (`update-ca-certificates` on
-Debian/Ubuntu, `update-ca-trust` on Fedora/RHEL, or `trust` on Arch) and
-runs the required steps itself through `sudo`, prompting for a password
-as needed. The target `.crt` name under `/usr/local/share/ca-certificates/`
-(or the Fedora/RHEL equivalent) is derived from the store directory's
-name, so certs from different `--dir` stores don't collide.
+detects which mechanism is present from the distribution's trust anchors
+directory (`/usr/local/share/ca-certificates/` + `update-ca-certificates`
+on Debian/Ubuntu, `/etc/pki/ca-trust/source/anchors/` + `update-ca-trust`
+on Fedora/RHEL, `/etc/pki/trust/anchors/` + `update-ca-certificates` on
+openSUSE, or `trust anchor` on Arch) and runs the required steps itself
+through `sudo`, prompting for a password as needed. The target `.crt` name
+in the anchors directory is derived from the store directory's name, so
+certs from different `--dir` stores don't collide.
 
 This is opt-in and explicit by design: `boringca` never touches the
 system trust store on its own just because it happens to be run as root

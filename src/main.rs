@@ -380,15 +380,30 @@ fn cmd_init(raw: &[String]) -> Result<(), String> {
 /// One of the OS-specific ways to add a locally-trusted CA, matched against
 /// what's actually installed on this machine (see `detect_trust_method`).
 enum TrustMethod {
-    /// Debian/Ubuntu: drop the cert under /usr/local/share/ca-certificates/
-    /// then run update-ca-certificates.
-    DebianLike { target: PathBuf },
-    /// Fedora/RHEL: drop the cert under /etc/pki/ca-trust/source/anchors/
-    /// then run update-ca-trust extract.
-    FedoraLike { target: PathBuf },
+    /// Drop the cert into a distribution's anchors directory, then run the
+    /// command that refreshes the system bundle from it.
+    CopyAndUpdate { target: PathBuf, update: &'static [&'static str] },
     /// Arch (p11-kit's `trust`): a single command does both steps.
-    ArchLike,
+    P11KitTrust,
 }
+
+/// Anchors directory and refresh command for each "copy then update"
+/// distribution family. Detection keys on the directory, which is specific
+/// to each family, rather than on the command name alone: the same command
+/// can exist on several distributions with a different directory
+/// (update-ca-certificates on Debian vs openSUSE, update-ca-trust on
+/// Fedora vs Arch).
+const COPY_AND_UPDATE_METHODS: &[(&str, &[&str])] = &[
+    // Debian/Ubuntu (and Alpine)
+    ("/usr/local/share/ca-certificates", &["update-ca-certificates"]),
+    // Fedora/RHEL
+    ("/etc/pki/ca-trust/source/anchors", &["update-ca-trust", "extract"]),
+    // openSUSE/SLES
+    ("/etc/pki/trust/anchors", &["update-ca-certificates"]),
+];
+
+/// Arch's local trust source, managed through p11-kit's `trust anchor`.
+const ARCH_TRUST_SOURCE: &str = "/etc/ca-certificates/trust-source";
 
 /// Look up `bin` in $PATH without spawning a subprocess, the same way a
 /// shell would -- used to pick which trust mechanism is actually present.
@@ -398,19 +413,18 @@ fn find_in_path(bin: &str) -> Option<PathBuf> {
 }
 
 fn detect_trust_method(filename: &str) -> Option<TrustMethod> {
-    if find_in_path("update-ca-certificates").is_some() {
-        Some(TrustMethod::DebianLike {
-            target: PathBuf::from("/usr/local/share/ca-certificates").join(filename),
-        })
-    } else if find_in_path("update-ca-trust").is_some() {
-        Some(TrustMethod::FedoraLike {
-            target: PathBuf::from("/etc/pki/ca-trust/source/anchors").join(filename),
-        })
-    } else if find_in_path("trust").is_some() {
-        Some(TrustMethod::ArchLike)
-    } else {
-        None
+    for &(anchors, update) in COPY_AND_UPDATE_METHODS {
+        if Path::new(anchors).is_dir() && find_in_path(update[0]).is_some() {
+            return Some(TrustMethod::CopyAndUpdate {
+                target: Path::new(anchors).join(filename),
+                update,
+            });
+        }
     }
+    if Path::new(ARCH_TRUST_SOURCE).is_dir() && find_in_path("trust").is_some() {
+        return Some(TrustMethod::P11KitTrust);
+    }
+    None
 }
 
 /// Run a command as root, always going through `sudo` (even if we're
@@ -444,28 +458,22 @@ fn cmd_install_trust(raw: &[String]) -> Result<(), String> {
     let filename = ca_trust_filename(&dir);
     let method = detect_trust_method(&filename).ok_or_else(|| {
         format!(
-            "couldn't find a known trust mechanism (update-ca-certificates, update-ca-trust or \
-             trust) on this system -- see the README to install {} into your OS/browser trust \
-             store manually",
+            "couldn't find a known trust mechanism (Debian/Ubuntu, Fedora/RHEL, openSUSE or \
+             Arch layout) on this system -- see the README to install {} into your OS/browser \
+             trust store manually",
             ca_crt_path.display()
         )
     })?;
 
     println!("Installing {} into the system trust store ...", ca_crt_path.display());
     match method {
-        TrustMethod::DebianLike { target } => {
+        TrustMethod::CopyAndUpdate { target, update } => {
             let target_str = target.to_str().ok_or("--dir contains invalid UTF-8")?;
             let src_str = ca_crt_path.to_str().ok_or("--dir contains invalid UTF-8")?;
             run_privileged("cp", &[src_str, target_str])?;
-            run_privileged("update-ca-certificates", &[])?;
+            run_privileged(update[0], &update[1..])?;
         }
-        TrustMethod::FedoraLike { target } => {
-            let target_str = target.to_str().ok_or("--dir contains invalid UTF-8")?;
-            let src_str = ca_crt_path.to_str().ok_or("--dir contains invalid UTF-8")?;
-            run_privileged("cp", &[src_str, target_str])?;
-            run_privileged("update-ca-trust", &["extract"])?;
-        }
-        TrustMethod::ArchLike => {
+        TrustMethod::P11KitTrust => {
             let src_str = ca_crt_path.to_str().ok_or("--dir contains invalid UTF-8")?;
             run_privileged("trust", &["anchor", "--store", src_str])?;
         }
