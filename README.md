@@ -71,7 +71,7 @@ $ boringca issue nas --san dns:nas.lan,ip:192.168.1.10
 $ boringca issue laptop --client --cn "user@laptop"
 $ boringca install-trust
 Installing /home/user/.boringca/ca.crt into the system trust store ...
-    sudo cp /home/user/.boringca/ca.crt /usr/local/share/ca-certificates/boringca.crt
+    sudo cp /home/user/.boringca/ca.crt /usr/local/share/ca-certificates/boringca-3f9a1c2e.crt
     sudo update-ca-certificates
 
 CA trusted system-wide.
@@ -93,8 +93,12 @@ on Debian/Ubuntu, `/etc/pki/ca-trust/source/anchors/` + `update-ca-trust`
 on Fedora/RHEL, `/etc/pki/trust/anchors/` + `update-ca-certificates` on
 openSUSE, or `trust anchor` on Arch) and runs the required steps itself
 through `sudo`, prompting for a password as needed. The target `.crt` name
-in the anchors directory is derived from the store directory's name, so
-certs from different `--dir` stores don't collide.
+in the anchors directory is the store directory's name plus a short hash
+of its absolute path (e.g. `boringca-3f9a1c2e.crt`), so certs from
+different `--dir` stores never collide, even when their directories share
+the same name; the browser entries described below are named the same
+way. A copy installed under the plain directory name by an older version
+is removed when it holds the same CA.
 
 This is opt-in and explicit by design: `boringca` never touches the
 system trust store on its own just because it happens to be run as root

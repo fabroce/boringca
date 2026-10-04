@@ -287,16 +287,55 @@ fn create_ca(dir: &Path, cn: &str, days: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// File name to use under /usr/local/share/ca-certificates/ so multiple
-/// boringca stores (different --dir) don't collide on the same name.
-fn ca_trust_filename(dir: &Path) -> String {
+/// Name identifying a store in the trust stores, before boringca made it
+/// unique: just the directory's name. Two stores with the same directory
+/// name (/srv/a/ca and /srv/b/ca, or two users' ~/.boringca) collided on
+/// it; it is only still computed to clean up after older versions.
+fn legacy_store_stem(dir: &Path) -> String {
     let name = dir
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("boringca")
         .trim_start_matches('.');
     let name = if name.is_empty() { "boringca" } else { name };
-    format!("{name}.crt")
+    name.to_string()
+}
+
+/// 64-bit FNV-1a followed by the murmur3 finalizer (so that paths differing
+/// only in their last characters don't get near-identical hashes): tiny,
+/// and unlike std's DefaultHasher guaranteed to give the same result across
+/// Rust versions, which matters for names that must stay the same from one
+/// boringca run to the next.
+fn path_hash(bytes: &[u8]) -> u64 {
+    let mut h = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, &b| {
+        (hash ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    h ^ (h >> 33)
+}
+
+/// Name identifying a store in the system and browser trust stores: the
+/// directory's name for readability, plus a short hash of its absolute path
+/// so that different stores never share it.
+fn store_stem(dir: &Path) -> String {
+    let abs = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let hash = path_hash(abs.as_os_str().as_encoded_bytes());
+    format!("{}-{:08x}", legacy_store_stem(&abs), (hash ^ (hash >> 32)) as u32)
+}
+
+/// File name to use in the system trust anchors directory
+/// (e.g. /usr/local/share/ca-certificates/).
+fn ca_trust_filename(stem: &str) -> String {
+    format!("{stem}.crt")
+}
+
+/// True if both files hold the same (first) PEM certificate.
+fn same_certificate(a: &Path, b: &Path) -> bool {
+    let first = |p: &Path| fs::read_to_string(p).ok().and_then(|s| pem_bodies(&s).into_iter().next());
+    matches!((first(a), first(b)), (Some(x), Some(y)) if x == y)
 }
 
 /// Create the CA in `dir` if it isn't there yet; does nothing otherwise.
@@ -455,8 +494,9 @@ fn cmd_install_trust(raw: &[String]) -> Result<(), String> {
         ));
     }
 
-    let filename = ca_trust_filename(&dir);
-    let method = detect_trust_method(&filename).ok_or_else(|| {
+    let stem = store_stem(&dir);
+    let legacy_stem = legacy_store_stem(&dir);
+    let method = detect_trust_method(&ca_trust_filename(&stem)).ok_or_else(|| {
         format!(
             "couldn't find a known trust mechanism (Debian/Ubuntu, Fedora/RHEL, openSUSE or \
              Arch layout) on this system -- see the README to install {} into your OS/browser \
@@ -471,6 +511,14 @@ fn cmd_install_trust(raw: &[String]) -> Result<(), String> {
             let target_str = target.to_str().ok_or("--dir contains invalid UTF-8")?;
             let src_str = ca_crt_path.to_str().ok_or("--dir contains invalid UTF-8")?;
             run_privileged("cp", &[src_str, target_str])?;
+            // Older versions installed this same CA under a name derived
+            // from the directory name alone: remove that copy, but only if
+            // it really is this CA (another store may own that name).
+            let legacy = target.with_file_name(ca_trust_filename(&legacy_stem));
+            if legacy != target && same_certificate(&legacy, &ca_crt_path) {
+                let legacy_str = legacy.to_str().ok_or("--dir contains invalid UTF-8")?;
+                run_privileged("rm", &["-f", legacy_str])?;
+            }
             run_privileged(update[0], &update[1..])?;
         }
         TrustMethod::P11KitTrust => {
@@ -490,7 +538,11 @@ fn cmd_install_trust(raw: &[String]) -> Result<(), String> {
     // the system trust store above, a failure here is reported, not fatal.
     println!();
     println!("Browser trust stores (best effort, no sudo needed):");
-    for line in install_browser_trust(&ca_crt_path, &nss_nickname(&dir)) {
+    let nicknames = NssNicknames {
+        current: nss_nickname(&dir, &stem),
+        legacy: nss_nickname(&dir, &legacy_stem),
+    };
+    for line in install_browser_trust(&ca_crt_path, &nicknames) {
         println!("  {line}");
     }
     Ok(())
@@ -501,13 +553,18 @@ fn cmd_install_trust(raw: &[String]) -> Result<(), String> {
 /// uses for the system copy, so two different `--dir` stores (even with
 /// the same default CN) never get treated as the same already-trusted
 /// entry.
-fn nss_nickname(dir: &Path) -> String {
+fn nss_nickname(dir: &Path, stem: &str) -> String {
     let cn = fs::read_to_string(dir.join("ca.cn"))
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| DEFAULT_CA_CN.to_string());
-    let stem = ca_trust_filename(dir);
-    let stem = stem.strip_suffix(".crt").unwrap_or(&stem);
     format!("{cn} ({stem})")
+}
+
+/// The nickname to install the CA under, and the one older versions used
+/// (derived from the directory name alone, see `legacy_store_stem`).
+struct NssNicknames {
+    current: String,
+    legacy: String,
 }
 
 /// Base64 bodies of every PEM block in `pem`, whitespace removed, so two
@@ -528,27 +585,45 @@ fn pem_bodies(pem: &str) -> Vec<String> {
     bodies
 }
 
-/// Certificates (as PEM bodies) stored under `nickname` in an NSS database;
-/// empty if there are none.
-fn nss_certs_named(db_arg: &str, nickname: &str) -> Vec<String> {
-    Command::new("certutil")
+/// The certificate (as a PEM body) stored under `nickname` in an NSS
+/// database, if any.
+///
+/// `certutil -L -n <nickname>` prints every certificate sharing that
+/// certificate's *subject*, not just the one under `nickname` -- and all
+/// CAs created with the same CN share it, whatever their store. The one
+/// actually under `nickname` comes first, so only that one is kept.
+fn nss_cert_named(db_arg: &str, nickname: &str) -> Option<String> {
+    let out = Command::new("certutil")
         .args(["-d", db_arg, "-L", "-n", nickname, "-a"])
         .output()
         .ok()
-        .filter(|out| out.status.success())
-        .map(|out| pem_bodies(&String::from_utf8_lossy(&out.stdout)))
-        .unwrap_or_default()
+        .filter(|out| out.status.success())?;
+    pem_bodies(&String::from_utf8_lossy(&out.stdout)).into_iter().next()
+}
+
+/// Delete the certificate stored under `nickname` -- only that one: unlike
+/// `-L`, `certutil -D` leaves other certificates of the same subject alone.
+fn nss_delete(db_arg: &str, nickname: &str) -> Result<(), String> {
+    let status = Command::new("certutil")
+        .args(["-d", db_arg, "-D", "-n", nickname])
+        .status()
+        .map_err(|e| format!("failed to run certutil: {e}"))?;
+    if !status.success() {
+        return Err(format!("failed to remove the previous CA, certutil exited with {status}"));
+    }
+    Ok(())
 }
 
 /// Add `ca_crt_path` to one NSS certificate database (`sql:<nss_dir>`),
 /// trusted for issuing server certs ("C,,"). Returns what happened so the
 /// caller can report it; a missing database or a `certutil` failure is
 /// communicated through `Err`, not a hard error for the whole command.
-fn nss_install(nss_dir: &Path, ca_crt_path: &Path, nickname: &str) -> Result<&'static str, String> {
+fn nss_install(nss_dir: &Path, ca_crt_path: &Path, nicknames: &NssNicknames) -> Result<&'static str, String> {
     if !nss_dir.is_dir() {
         return Err("no database found".to_string());
     }
     let db_arg = format!("sql:{}", nss_dir.display());
+    let nickname = nicknames.current.as_str();
 
     let ours = fs::read_to_string(ca_crt_path)
         .map_err(|e| format!("failed to read {}: {e}", ca_crt_path.display()))?;
@@ -557,22 +632,27 @@ fn nss_install(nss_dir: &Path, ca_crt_path: &Path, nickname: &str) -> Result<&'s
         .next()
         .ok_or_else(|| format!("{} is not a PEM certificate", ca_crt_path.display()))?;
 
-    // The nickname only identifies the store (CN + directory name), not the
-    // CA itself: after "init --force" in the same store it still points at
+    // Older versions installed this CA under a nickname derived from the
+    // directory name alone. NSS keeps a certificate under a single
+    // nickname (adding it again under another one is a no-op), so remove
+    // that entry first -- only if it is exactly this CA, since another
+    // store with the same directory name may own that nickname.
+    if nicknames.legacy != nickname && nss_cert_named(&db_arg, &nicknames.legacy).as_ref() == Some(&ours) {
+        nss_delete(&db_arg, &nicknames.legacy)?;
+    }
+
+    // The nickname only identifies the store (CN + directory), not the CA
+    // itself: after "init --force" in the same store it still points at
     // the previous CA. Compare the actual certificates, and drop a previous
     // CA rather than leaving it trusted next to the new one.
-    let existing = nss_certs_named(&db_arg, nickname);
-    if existing.contains(&ours) {
-        return Ok("already trusted");
-    }
-    for _ in 0..existing.len() {
-        let status = Command::new("certutil")
-            .args(["-d", &db_arg, "-D", "-n", nickname])
-            .status()
-            .map_err(|e| format!("failed to run certutil: {e}"))?;
-        if !status.success() {
-            return Err(format!("failed to remove the previous CA, certutil exited with {status}"));
+    let mut replaced = false;
+    match nss_cert_named(&db_arg, nickname) {
+        Some(cert) if cert == ours => return Ok("already trusted"),
+        Some(_) => {
+            nss_delete(&db_arg, nickname)?;
+            replaced = true;
         }
+        None => {}
     }
 
     let status = Command::new("certutil")
@@ -583,7 +663,12 @@ fn nss_install(nss_dir: &Path, ca_crt_path: &Path, nickname: &str) -> Result<&'s
     if !status.success() {
         return Err(format!("certutil exited with {status}"));
     }
-    Ok(if existing.is_empty() { "installed" } else { "installed (replaced a previous CA from this store)" })
+    // If this exact CA was already there under some other nickname (e.g.
+    // imported by hand), NSS keeps it under that one and ignores ours.
+    if nss_cert_named(&db_arg, nickname).as_ref() != Some(&ours) {
+        return Ok("already trusted (under another nickname)");
+    }
+    Ok(if replaced { "installed (replaced a previous CA from this store)" } else { "installed" })
 }
 
 /// Parse ~/.mozilla/firefox/profiles.ini (the same format Firefox itself
@@ -629,7 +714,7 @@ fn find_firefox_profiles(home: &str) -> Vec<PathBuf> {
     profiles
 }
 
-fn install_browser_trust(ca_crt_path: &Path, nickname: &str) -> Vec<String> {
+fn install_browser_trust(ca_crt_path: &Path, nicknames: &NssNicknames) -> Vec<String> {
     if find_in_path("certutil").is_none() {
         return vec![
             "certutil not found -- install 'libnss3-tools' (Debian/Ubuntu) to also trust \
@@ -649,7 +734,7 @@ fn install_browser_trust(ca_crt_path: &Path, nickname: &str) -> Vec<String> {
     } else {
         for profile in profiles {
             let label = format!("Firefox ({})", profile.display());
-            match nss_install(&profile, ca_crt_path, nickname) {
+            match nss_install(&profile, ca_crt_path, nicknames) {
                 Ok(status) => lines.push(format!("{label}: {status}")),
                 Err(e) => lines.push(format!("{label}: skipped -- {e}")),
             }
@@ -660,7 +745,7 @@ fn install_browser_trust(ca_crt_path: &Path, nickname: &str) -> Vec<String> {
     // one NSS database on Linux.
     let nssdb = Path::new(&home).join(".pki/nssdb");
     let label = "Chromium/Chrome (~/.pki/nssdb)";
-    match nss_install(&nssdb, ca_crt_path, nickname) {
+    match nss_install(&nssdb, ca_crt_path, nicknames) {
         Ok(status) => lines.push(format!("{label}: {status}")),
         Err(e) => lines.push(format!("{label}: skipped -- {e}")),
     }

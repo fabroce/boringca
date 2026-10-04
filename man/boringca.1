@@ -128,8 +128,9 @@ under
 .I /etc/pki/ca-trust/source/anchors/
 or
 .I /etc/pki/trust/anchors/
-is named after the store directory, so certificates from different
-\fB\-\-dir\fR stores don't collide.
+is named after the store directory plus a short hash of its absolute
+path, so certificates from different \fB\-\-dir\fR stores never collide,
+even when their directories share the same name.
 .PP
 If no known mechanism is found, the system-wide step fails with an error
 instead of guessing; place
