@@ -45,11 +45,11 @@ _boringca() {
 
     local opts
     case "$cmd" in
-        init) opts="--cn --days --dir --force" ;;
-        issue) opts="--cn --san --server --client --both --days --dir" ;;
-        install-trust) opts="--dir" ;;
+        init) opts="--cn --days --dir --force -h --help" ;;
+        issue) opts="--cn --san --server --client --both --days --dir --force -h --help" ;;
+        install-trust) opts="--dir -h --help" ;;
         "") opts="$subcommands -h --help" ;;
-        *) opts="--cn --san --server --client --both --days --dir" ;;
+        *) opts="--cn --san --server --client --both --days --dir --force" ;;
     esac
 
     COMPREPLY=( $(compgen -W "$opts" -- "$cur") )

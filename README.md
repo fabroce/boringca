@@ -4,7 +4,7 @@
 ![PKI](https://img.shields.io/badge/PKI-certificate--authority-informational)
 ![TLS](https://img.shields.io/badge/TLS-self--signed-blueviolet)
 ![Self-hosted](https://img.shields.io/badge/self--hosted-yes-success)
-![License](https://img.shields.io/badge/license-MIT-blue)
+![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 ![GitHub stars](https://img.shields.io/github/stars/fabroce/boringca?style=social)
 ![GitHub last commit](https://img.shields.io/github/last-commit/fabroce/boringca)
 ![GitHub issues](https://img.shields.io/github/issues/fabroce/boringca)
@@ -71,7 +71,7 @@ $ boringca issue nas --san dns:nas.lan,ip:192.168.1.10
 $ boringca issue laptop --client --cn "user@laptop"
 $ boringca install-trust
 Installing /home/user/.boringca/ca.crt into the system trust store ...
-    sudo cp /home/user/.boringca/ca.crt /usr/local/share/ca-certificates/boringca-3f9a1c2e.crt
+    sudo cp -- /home/user/.boringca/ca.crt /usr/local/share/ca-certificates/boringca-3f9a1c2e.crt
     sudo update-ca-certificates
 
 CA trusted system-wide.
@@ -81,8 +81,22 @@ Browser trust stores (best effort, no sudo needed):
   Chromium/Chrome (~/.pki/nssdb): installed
 ```
 
-`boringca <name>` is exactly `boringca issue <name>` with every option left
-at its default. Run `boringca --help` for the full option list.
+`boringca <name>` is exactly `boringca issue <name>` and accepts the same
+options. Run `boringca --help` (or `boringca <command> --help`) for the
+full option list.
+
+A few things `issue` does for you:
+
+- **Subject Alternative Names**: browsers match a server certificate
+  against its SANs only, so without `--san` one is derived from the CN --
+  `ip:<cn>` for an IP address (`boringca 192.168.1.10`), `dns:<cn>` for a
+  host name. A CN that is neither (e.g. `user@laptop`) is refused for a
+  server certificate (pass `--san`), and gives no SAN at all for a
+  `--client` one.
+- **No silent overwrite**: issuing a name that already exists fails
+  unless you pass `--force` (e.g. to renew it).
+- **Never outlives the CA**: a certificate's validity is capped to the
+  CA's own expiry date, with a note when that happens.
 
 ### Trusting the CA
 
@@ -92,7 +106,10 @@ directory (`/usr/local/share/ca-certificates/` + `update-ca-certificates`
 on Debian/Ubuntu, `/etc/pki/ca-trust/source/anchors/` + `update-ca-trust`
 on Fedora/RHEL, `/etc/pki/trust/anchors/` + `update-ca-certificates` on
 openSUSE, or `trust anchor` on Arch) and runs the required steps itself
-through `sudo`, prompting for a password as needed. The target `.crt` name
+through `sudo` (or `doas` when there is no `sudo`, or directly when
+already root and neither is installed), prompting for a password as
+needed. The tools are also looked up in `/usr/sbin` and friends, even when
+they aren't in your `$PATH`. The target `.crt` name
 in the anchors directory is the store directory's name plus a short hash
 of its absolute path (e.g. `boringca-3f9a1c2e.crt`), so certs from
 different `--dir` stores never collide, even when their directories share
@@ -112,8 +129,9 @@ trust store.
 
 `install-trust` also tries, best-effort, to trust the CA in Firefox and
 Chromium-based browsers: on Linux these keep their own NSS certificate
-databases (a `cert9.db` per Firefox profile, a shared one for
-Chromium/Chrome under `~/.pki/nssdb`) and never consult the system trust
+databases (a `cert9.db` per Firefox profile -- classic, Snap or Flatpak
+install -- and a shared one for Chromium/Chrome under `~/.pki/nssdb`, plus
+the Chromium Snap's own) and never consult the system trust
 store at all. This part needs `certutil` (Debian/Ubuntu: `libnss3-tools`)
 and runs entirely as your user, no `sudo` involved. Unlike the
 system-wide step, a failure here (missing `certutil`, no Firefox profile,
@@ -151,7 +169,7 @@ Everything lives under one directory (`--dir`, or `$BORINGCA_HOME`, default
 ```
 ca.key                  root CA private key   (mode 600)
 ca.crt                  root CA certificate
-ca.cn                   CA's Common Name (used to reconstruct it when signing)
+ca.cn                   CA's Common Name (informational, read from ca.crt)
 private/<name>.key      issued certificate's private key   (mode 600)
 certs/<name>.crt        issued certificate
 ```
@@ -181,6 +199,13 @@ or simply:
 $ cargo install --path .
 ```
 
+To run the unit tests (no network, no root, nothing outside a temporary
+directory is touched):
+
+```console
+$ cargo test
+```
+
 ### Debian / Ubuntu
 
 Built entirely offline with the Debian `dh-cargo` buildsystem, against the
@@ -197,7 +222,7 @@ dependencies beyond libc. See [`debian/`](debian/).
 ### Fedora / RHEL / openSUSE (rpm)
 
 ```console
-$ rpmbuild -ta boringca-0.1.0.tar.gz
+$ rpmbuild -ta boringca-<version>.tar.gz
 ```
 
 using the spec file in [`packaging/rpm/boringca.spec`](packaging/rpm/boringca.spec).

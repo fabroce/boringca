@@ -35,10 +35,12 @@ production CA/PKI system.
 .PP
 Run with no arguments, \fBboringca\fR sets up the CA on first use and
 prints where it is stored. Run as \fBboringca\fR \fIname\fR, it issues a
-certificate for DNS name \fIname\fR signed by that CA, creating the CA
-first if it doesn't exist yet -- this is shorthand for \fBboringca
-issue\fR \fIname\fR with every option left at its default. The \fBinit\fR
-and \fBissue\fR subcommands below give full control over every option.
+certificate for \fIname\fR (a DNS name or an IP address) signed by that
+CA, creating the CA first if it doesn't exist yet -- this is shorthand
+for \fBboringca issue\fR \fIname\fR, and accepts the same options. The
+\fBinit\fR and \fBissue\fR subcommands below give full control over every
+option. Options may also be given as \fB\-\-option=value\fR, and
+\fB\-h\fR/\fB\-\-help\fR is accepted after any subcommand.
 \fBinstall\-trust\fR adds the CA to the system trust store; see
 .B TRUSTING THE CA
 below.
@@ -67,7 +69,10 @@ Common Name (default: the certificate's \fIname\fR).
 .BI \-\-san " list"
 Comma-separated Subject Alternative Names, e.g.
 \fIdns:example.com,dns:www.example.com,ip:10.0.0.1\fR
-(default: \fIdns:<cn>\fR).
+(types: \fIdns\fR, \fIip\fR, \fIemail\fR, \fIuri\fR). Default:
+\fIip:<cn>\fR if the CN is an IP address, \fIdns:<cn>\fR if it is a host
+name; a CN that is neither (e.g. \fIuser@laptop\fR) is an error for a
+server certificate, and gives no SAN for a \fB\-\-client\fR one.
 .TP
 .B \-\-server
 Issue a server certificate, \fIextendedKeyUsage=serverAuth\fR (default).
@@ -77,12 +82,18 @@ Issue a client certificate, \fIextendedKeyUsage=clientAuth\fR.
 .TP
 .B \-\-both
 Issue a certificate valid for both server and client authentication.
+\fB\-\-server\fR, \fB\-\-client\fR and \fB\-\-both\fR are mutually
+exclusive.
 .TP
 .BI \-\-days " n"
-Validity in days (default: 825).
+Validity in days (default: 825), capped to the CA's own expiry date.
 .TP
 .BI \-\-dir " path"
 CA store directory (default: \fB$BORINGCA_HOME\fR or \fI~/.boringca\fR).
+.TP
+.B \-\-force
+Replace an existing certificate with the same \fIname\fR (without it,
+issuing an existing name fails).
 .SH INSTALL\-TRUST OPTIONS
 .TP
 .BI \-\-dir " path"
@@ -95,8 +106,9 @@ Under the CA store directory:
 Root CA private key and certificate.
 .TP
 .I ca.cn
-The CA's Common Name, used to reconstruct it in memory when signing new
-certificates. Do not edit or remove while the CA is in use.
+The CA's Common Name. Informational only: the Common Name is read from
+.I ca.crt
+when signing.
 .TP
 .I private/<name>.key
 Issued certificate's private key.
@@ -118,8 +130,13 @@ on Debian/Ubuntu and openSUSE,
 .BR update\-ca\-trust (8)
 on Fedora/RHEL, or
 .BR trust (1)
-on Arch) and runs the required steps through
-.BR sudo (8),
+on Arch; the tools are also looked up in the sbin directories) and runs
+the required steps through
+.BR sudo (8)
+(or
+.BR doas (1)
+when there is no sudo, or directly when already root and neither is
+installed),
 prompting for a password as needed -- this never happens implicitly (e.g.
 merely because boringca itself is run as root); it is only ever done when
 \fBinstall\-trust\fR is invoked explicitly. The certificate file installed
@@ -144,9 +161,11 @@ trust store above -- each keeps its own NSS certificate database instead
 (a
 .I cert9.db
 per Firefox profile, found via
-.IR ~/.mozilla/firefox/profiles.ini ,
-and one shared by Chromium/Chrome under
-.IR ~/.pki/nssdb ).
+.I profiles.ini
+of the classic, Snap or Flatpak install, and one shared by
+Chromium/Chrome under
+.IR ~/.pki/nssdb ,
+plus the Chromium Snap's own).
 This step needs
 .BR certutil (1)
 (Debian/Ubuntu package
