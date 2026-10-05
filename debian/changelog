@@ -1,3 +1,29 @@
+boringca (5.0.0) stable; urgency=medium
+
+  * Security: private keys are created with mode 600 from the start, and
+    keys/certificates are written atomically (temporary file + rename).
+  * issue: refuse to overwrite an existing certificate without --force.
+  * issue: default SAN is ip:<cn> for an IP address and dns:<cn> for a host
+    name; an invalid host name is an error for server certs and gives no
+    SAN for client certs. Explicit dns: SANs are validated.
+  * issue: validity is exactly --days (825 days by default, was 826) and
+    capped to the CA's expiry; --days 0 or too large is rejected.
+  * issue: leaf certificates no longer carry keyEncipherment (ECDSA).
+  * issue: the CA's CN is read from ca.crt and checked against ca.key;
+    ca.cn is now informational only.
+  * init: new CAs are created with pathlen:0.
+  * install-trust: detect the mechanism from the trust anchors directory
+    (fixes Arch, adds openSUSE); per-store unique file names and NSS
+    nicknames (migrating entries from older versions); replace a previous
+    CA from the same store in browsers; look up tools in sbin; sudo/doas
+    fallback; Firefox Snap/Flatpak and Chromium Snap support.
+  * CLI: "help" subcommand, -h/--help after subcommands, --opt=value, "--",
+    unexpected arguments and conflicting --server/--client/--both rejected;
+    validation happens before the CA is auto-created.
+  * Unit tests (cargo test).
+
+ -- Fabrice Dagorn <fabrice@dagorn.fr>  Mon, 05 Oct 2026 13:19:20 +0200
+
 boringca (4.0.2) stable; urgency=medium
 
   * Documentation: shell completion section, sync rpm/PKGBUILD/man version

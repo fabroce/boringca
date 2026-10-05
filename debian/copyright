@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: boringca
 Upstream-Contact: Fabrice Dagorn <fabrice@dagorn.fr>
-Source: https://github.com/fdagorn/boringca
+Source: https://github.com/fabroce/boringca
 
 Files: *
 Copyright: 2026 Fabrice Dagorn <fabrice@dagorn.fr>

@@ -1,10 +1,10 @@
 # Maintainer: Fabrice Dagorn <fabrice@dagorn.fr>
 pkgname=boringca
-pkgver=4.0.2
+pkgver=5.0.0
 pkgrel=1
 pkgdesc="Quickly create a CA and issue child certificates (self-contained, rcgen/ring)"
 arch=('x86_64' 'aarch64')
-url="https://github.com/fdagorn/boringca"
+url="https://github.com/fabroce/boringca"
 license=('MIT' 'Apache-2.0')
 depends=()
 optdepends=('nss: trust the CA in Firefox/Chromium via boringca install-trust')
@@ -15,13 +15,17 @@ options=('!lto')
 # This PKGBUILD is meant to be run from within the boringca source tree
 # (packaging/archlinux/), e.g.:
 #   cd packaging/archlinux && makepkg -si
+# $startdir is packaging/archlinux/: build and install from the source
+# tree root, where cargo puts target/ and where man/ and the licenses are.
+_srcroot() { realpath "$startdir/../.."; }
+
 build() {
-  cd "$startdir"
+  cd "$(_srcroot)"
   cargo build --release --locked || cargo build --release
 }
 
 package() {
-  cd "$startdir"
+  cd "$(_srcroot)"
   install -Dm755 target/release/boringca "$pkgdir/usr/bin/boringca"
   install -Dm644 man/boringca.1 "$pkgdir/usr/share/man/man1/boringca.1"
   install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"

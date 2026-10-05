@@ -11,7 +11,7 @@ Build-Depends: debhelper-compat (= 13),
                librust-time-dev (>= 0.3.37)
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
-Homepage: https://github.com/fdagorn/boringca
+Homepage: https://github.com/fabroce/boringca
 
 Package: boringca
 Architecture: any

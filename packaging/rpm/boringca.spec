@@ -1,10 +1,10 @@
 Name:           boringca
-Version:        4.0.2
+Version:        5.0.0
 Release:        1%{?dist}
 Summary:        Quickly create a CA and issue child certificates
 
 License:        MIT OR Apache-2.0
-URL:            https://github.com/fdagorn/boringca
+URL:            https://github.com/fabroce/boringca
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  cargo
@@ -46,6 +46,19 @@ install -Dm644 man/boringca.1 %{buildroot}%{_mandir}/man1/boringca.1
 %{_mandir}/man1/boringca.1*
 
 %changelog
+* Mon Oct 05 2026 Fabrice Dagorn <fabrice@dagorn.fr> - 5.0.0-1
+- Private keys are never on disk with loose permissions; key and
+  certificate are written atomically.
+- issue: refuses to overwrite an existing certificate without --force;
+  default SAN is ip:<cn> for an IP address, none for a client cert whose
+  CN isn't a host name; validity capped to the CA's expiry; leaf certs no
+  longer carry keyEncipherment; the CA is read back from ca.crt.
+- New CAs are created with pathlen:0.
+- install-trust: detection by trust anchors directory (fixes Arch,
+  adds openSUSE), unique per-store names, sudo/doas fallback, Firefox
+  Snap/Flatpak and Chromium Snap support.
+- Stricter option parsing; "help" subcommand; --days validated.
+
 * Wed Sep 16 2026 Fabrice Dagorn <fabrice@dagorn.fr> - 4.0.2-1
 - Sync version with upstream; add boringca install-trust (system trust
   store, plus best-effort Firefox/Chromium via nss-tools).
