@@ -13,7 +13,7 @@ _boringca() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local subcommands="init issue install-trust help"
+    local subcommands="init issue install-trust uninstall-trust help"
 
     # Find the subcommand, i.e. the first word after "boringca" that isn't
     # itself an option -- everything else (including the quick
@@ -47,7 +47,7 @@ _boringca() {
     case "$cmd" in
         init) opts="--cn --days --dir --force -h --help" ;;
         issue) opts="--cn --san --server --client --both --days --dir --force -h --help" ;;
-        install-trust) opts="--dir -h --help" ;;
+        install-trust|uninstall-trust) opts="--dir -h --help" ;;
         "") opts="$subcommands -h --help" ;;
         *) opts="--cn --san --server --client --both --days --dir --force" ;;
     esac

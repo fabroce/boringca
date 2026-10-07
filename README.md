@@ -42,6 +42,7 @@ CA ready in /home/user/.boringca
 
 To trust this CA system-wide, run:
     boringca install-trust
+    boringca uninstall-trust
 (it will ask for your password via sudo; see the README for manual steps
  or unsupported distros)
 
@@ -137,6 +138,16 @@ and runs entirely as your user, no `sudo` involved. Unlike the
 system-wide step, a failure here (missing `certutil`, no Firefox profile,
 ...) is reported per browser rather than failing the whole command --
 restart the browser afterwards for it to notice the new CA.
+
+To undo it, run `boringca uninstall-trust` (same `--dir` option): it
+removes this store's CA from the system trust store (through `sudo`, then
+refreshing the bundle) and from the same browser databases, and leaves the
+CA itself in its directory -- delete that directory afterwards if you no
+longer need it. Entries are found by the store's unique name, so this
+still works after the store directory has been deleted (except on Arch,
+where p11-kit needs `ca.crt` to find the anchor); entries of other stores
+are never touched. Do it before throwing a CA away, or when its key may
+have leaked: until then, anything signed with that key is trusted.
 
 ### Shell completion
 

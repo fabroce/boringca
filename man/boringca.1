@@ -1,4 +1,4 @@
-.TH BORINGCA 1 "October 2026" "boringca 5.0.0" "User Commands"
+.TH BORINGCA 1 "October 2026" "boringca 5.1.0" "User Commands"
 .SH NAME
 boringca \- quickly create a CA and issue child certificates
 .SH SYNOPSIS
@@ -22,6 +22,10 @@ boringca \- quickly create a CA and issue child certificates
 [\fIOPTIONS\fR]
 .br
 .B boringca
+.B uninstall\-trust
+[\fIOPTIONS\fR]
+.br
+.B boringca
 .B help
 .SH DESCRIPTION
 .B boringca
@@ -41,7 +45,8 @@ for \fBboringca issue\fR \fIname\fR, and accepts the same options. The
 \fBinit\fR and \fBissue\fR subcommands below give full control over every
 option. Options may also be given as \fB\-\-option=value\fR, and
 \fB\-h\fR/\fB\-\-help\fR is accepted after any subcommand.
-\fBinstall\-trust\fR adds the CA to the system trust store; see
+\fBinstall\-trust\fR adds the CA to the system trust store, and
+\fBuninstall\-trust\fR removes it again; see
 .B TRUSTING THE CA
 below.
 .SH INIT OPTIONS
@@ -94,7 +99,7 @@ CA store directory (default: \fB$BORINGCA_HOME\fR or \fI~/.boringca\fR).
 .B \-\-force
 Replace an existing certificate with the same \fIname\fR (without it,
 issuing an existing name fails).
-.SH INSTALL\-TRUST OPTIONS
+.SH INSTALL\-TRUST AND UNINSTALL\-TRUST OPTIONS
 .TP
 .BI \-\-dir " path"
 CA store directory (default: \fB$BORINGCA_HOME\fR or \fI~/.boringca\fR).
@@ -176,6 +181,20 @@ involved. A failure here (missing
 .BR certutil ,
 no Firefox profile, ...) is reported per browser and does not fail the
 command -- restart the browser afterwards for it to notice the new CA.
+.PP
+.B boringca uninstall\-trust
+undoes all of the above for the store given by \fB\-\-dir\fR: it removes
+the CA from the system trust store (through
+.BR sudo (8),
+then refreshing the system bundle) and from the same browser databases,
+and leaves the CA itself in its directory -- delete that directory
+afterwards if it is no longer needed. Entries are found by the store's
+unique name, so this still works after the store directory has been
+deleted (except on Arch, where
+.BR trust (1)
+needs
+.I ca.crt
+to find the anchor); entries of other stores are never touched.
 .SH SHELL COMPLETION
 A bash completion script is shipped in
 .IR completions/boringca.bash .
@@ -200,6 +219,7 @@ boringca init --cn "Home Lab CA"
 boringca issue nas --san dns:nas.lan,ip:192.168.1.10
 boringca issue laptop --client --cn "fabrice@laptop"
 boringca install-trust
+boringca uninstall-trust
 .EE
 .SH AUTHOR
 Fabrice Dagorn <fabrice@dagorn.fr>

@@ -1,5 +1,5 @@
 Name:           boringca
-Version:        5.0.0
+Version:        5.1.0
 Release:        1%{?dist}
 Summary:        Quickly create a CA and issue child certificates
 
@@ -46,6 +46,11 @@ install -Dm644 man/boringca.1 %{buildroot}%{_mandir}/man1/boringca.1
 %{_mandir}/man1/boringca.1*
 
 %changelog
+* Wed Oct 07 2026 Fabrice Dagorn <fabrice@dagorn.fr> - 5.1.0-1
+- New uninstall-trust command: removes the store's CA from the system
+  trust store and from Firefox/Chromium NSS databases (the CA itself is
+  kept), even once the store directory has been deleted (except on Arch).
+
 * Mon Oct 05 2026 Fabrice Dagorn <fabrice@dagorn.fr> - 5.0.0-1
 - Private keys are never on disk with loose permissions; key and
   certificate are written atomically.

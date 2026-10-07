@@ -1,3 +1,15 @@
+boringca (5.1.0) stable; urgency=medium
+
+  * New uninstall-trust command, the reverse of install-trust: removes the
+    store's CA from the system trust store (sudo rm + refresh) and from the
+    Firefox/Chromium NSS databases, leaving the CA itself in --dir. Entries
+    are found by the store's unique name, so it still works once the store
+    directory is gone (except on Arch, where p11-kit needs ca.crt); entries
+    of other stores are never touched.
+  * Bash completion, man page and README updated accordingly.
+
+ -- Fabrice Dagorn <fabrice@dagorn.fr>  Wed, 07 Oct 2026 10:21:12 +0200
+
 boringca (5.0.0) stable; urgency=medium
 
   * Security: private keys are created with mode 600 from the start, and

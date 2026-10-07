@@ -51,6 +51,7 @@ fn main() -> ExitCode {
         Some("init") => cmd_init(&args[1..]),
         Some("issue") => cmd_issue(&args[1..]),
         Some("install-trust") => cmd_install_trust(&args[1..]),
+        Some("uninstall-trust") => cmd_uninstall_trust(&args[1..]),
         Some(_) => quick_issue(&args),
     };
 
@@ -78,10 +79,11 @@ QUICK START:
         boringca nas.lan
 
 ADVANCED USAGE:
-    boringca init          [OPTIONS]   (Re)create the root CA explicitly
-    boringca issue  <name> [OPTIONS]   Issue a certificate with full control
-    boringca install-trust [OPTIONS]   Trust the CA system-wide (uses sudo)
-    boringca help                      Show this help (also -h/--help)
+    boringca init            [OPTIONS]   (Re)create the root CA explicitly
+    boringca issue    <name> [OPTIONS]   Issue a certificate with full control
+    boringca install-trust   [OPTIONS]   Trust the CA system-wide (uses sudo)
+    boringca uninstall-trust [OPTIONS]   Remove that trust again (uses sudo)
+    boringca help                        Show this help (also -h/--help)
 
     "boringca <name>" above is shorthand for "boringca issue <name>"; it
     accepts the same options. Options also accept the --opt=value form.
@@ -92,7 +94,7 @@ INIT OPTIONS:
     --dir <path>      CA store directory                  [default: $BORINGCA_HOME or ~/.boringca]
     --force           Overwrite an existing CA in --dir
 
-INSTALL-TRUST OPTIONS:
+INSTALL-TRUST / UNINSTALL-TRUST OPTIONS:
     --dir <path>      CA store directory                  [default: $BORINGCA_HOME or ~/.boringca]
 
 ISSUE OPTIONS:
@@ -114,6 +116,7 @@ EXAMPLES:
     boringca issue nas --san dns:nas.lan,ip:192.168.1.10
     boringca issue laptop --client --cn "user@laptop"
     boringca install-trust
+    boringca uninstall-trust
 
 STORE LAYOUT (under --dir):
     ca.key, ca.crt          root CA private key and certificate
@@ -900,10 +903,149 @@ fn cmd_install_trust(raw: &[String]) -> Result<(), String> {
         current: nss_nickname(&cn, &stem),
         legacy: nss_nickname(&cn, &legacy_stem),
     };
-    for line in install_browser_trust(&ca_crt_path, &nicknames) {
+    for line in for_each_browser_db(|db| nss_install(db, &ca_crt_path, &nicknames)) {
         println!("  {line}");
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// boringca uninstall-trust [OPTIONS]
+//
+// The reverse of install-trust: removes this store's CA from the system
+// and browser trust stores, leaving the CA itself (--dir) untouched. It
+// finds what to remove from the store's unique name (see `store_stem`), so
+// it still works once ca.crt is gone -- except on Arch, where p11-kit
+// needs the certificate to find its anchor.
+// ---------------------------------------------------------------------
+
+fn cmd_uninstall_trust(raw: &[String]) -> Result<(), String> {
+    let args = parse_args(raw, &["dir"], &[], 0)?;
+    let dir = ca_dir(args.flags.get("dir"))?;
+    let ca_crt_path = dir.join("ca.crt");
+    let has_crt = ca_crt_path.exists();
+
+    let stem = store_stem(&dir);
+    let legacy_stem = legacy_store_stem(&dir);
+    let method = detect_trust_method(&ca_trust_filename(&stem)).ok_or_else(|| {
+        "couldn't find a known trust mechanism (Debian/Ubuntu, Fedora/RHEL, openSUSE or Arch \
+         layout) on this system -- remove the CA from your OS/browser trust store manually"
+            .to_string()
+    })?;
+
+    println!("Removing the CA of {} from the system trust store ...", dir.display());
+    match method {
+        TrustMethod::CopyAndUpdate { target, update } => {
+            let mut to_remove = Vec::new();
+            if target.exists() {
+                to_remove.push(target.clone());
+            }
+            // A copy installed by an older version, under the directory
+            // name alone: only if it really is this CA (see install-trust).
+            let legacy = target.with_file_name(ca_trust_filename(&legacy_stem));
+            if legacy != target && has_crt && same_certificate(&legacy, &ca_crt_path) {
+                to_remove.push(legacy);
+            }
+            if to_remove.is_empty() {
+                println!("    not installed, nothing to remove");
+            } else {
+                let tool = privilege_tool()?;
+                for path in &to_remove {
+                    let path_str = path.to_str().ok_or("--dir contains invalid UTF-8")?;
+                    run_privileged(tool, "rm", &["-f", "--", path_str])?;
+                }
+                run_privileged(tool, update[0], &update[1..])?;
+            }
+        }
+        TrustMethod::P11KitTrust => {
+            if !has_crt {
+                return Err(format!(
+                    "{} is missing, and p11-kit needs the certificate itself to find the anchor \
+                     to remove -- use 'trust list' and 'trust anchor --remove' manually",
+                    ca_crt_path.display()
+                ));
+            }
+            let src_str = ca_crt_path.to_str().ok_or("--dir contains invalid UTF-8")?;
+            run_privileged(privilege_tool()?, "trust", &["anchor", "--remove", src_str])?;
+        }
+    }
+
+    println!();
+    println!("Browser trust stores (best effort, no sudo needed):");
+    let legacy = has_crt
+        .then(|| {
+            let cn = ca_common_name(&ca_crt_path)?;
+            let ours = pem_bodies(&fs::read_to_string(&ca_crt_path).ok()?).into_iter().next()?;
+            Some((nss_nickname(&cn, &legacy_stem), ours))
+        })
+        .flatten();
+    let legacy = legacy.as_ref().map(|(nickname, ours)| (nickname.as_str(), ours.as_str()));
+    for line in for_each_browser_db(|db| nss_uninstall(db, &stem, legacy)) {
+        println!("  {line}");
+    }
+
+    println!();
+    println!("The CA itself is still in {} -- delete that directory to get rid of it.", dir.display());
+    Ok(())
+}
+
+/// The nicknames in a `certutil -L` listing: each certificate line is the
+/// nickname, padded, followed by its trust attributes ("C,,", "u,u,u", ...).
+fn nss_list_nicknames(listing: &str) -> Vec<String> {
+    listing
+        .lines()
+        .filter_map(|line| {
+            let (nickname, trust) = line.trim_end().rsplit_once(char::is_whitespace)?;
+            let nickname = nickname.trim();
+            (trust.split(',').count() == 3 && !nickname.is_empty()).then(|| nickname.to_string())
+        })
+        .collect()
+}
+
+/// Remove this store's CA from one NSS certificate database: every entry
+/// whose nickname ends with " (<stem>)" (whatever the CN, so a CA whose
+/// ca.crt is gone is still found), plus the nickname older versions used
+/// when it holds exactly this CA (`legacy`: nickname, PEM body).
+fn nss_uninstall(nss_dir: &Path, stem: &str, legacy: Option<(&str, &str)>) -> Result<&'static str, String> {
+    if !nss_dir.is_dir() {
+        return Err("no database found".to_string());
+    }
+    let db_arg = format!("sql:{}", nss_dir.display());
+
+    let out = Command::new("certutil")
+        .args(["-d", &db_arg, "-L"])
+        .output()
+        .map_err(|e| format!("failed to run certutil: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("certutil exited with {}", out.status));
+    }
+    let suffix = format!(" ({stem})");
+    let mut nicknames: Vec<String> = nss_list_nicknames(&String::from_utf8_lossy(&out.stdout))
+        .into_iter()
+        .filter(|nickname| nickname.ends_with(&suffix))
+        .collect();
+    if let Some((nickname, ours)) = legacy {
+        if nss_cert_named(&db_arg, nickname).as_deref() == Some(ours) {
+            nicknames.push(nickname.to_string());
+        }
+    }
+    nicknames.sort();
+    nicknames.dedup();
+    if nicknames.is_empty() {
+        return Ok("not installed");
+    }
+
+    for nickname in &nicknames {
+        // Bounded: one nickname normally holds a single certificate, but
+        // NSS allows several (same subject) and -D removes one at a time.
+        for _ in 0..16 {
+            if nss_cert_named(&db_arg, nickname).is_none() {
+                break;
+            }
+            nss_delete(&db_arg, nickname)?;
+        }
+    }
+    Ok("removed")
 }
 
 /// Nickname used for the CA in NSS certificate databases: the CA's Common
@@ -1066,10 +1208,12 @@ fn find_firefox_profiles(firefox_dir: &Path) -> Vec<PathBuf> {
     profiles
 }
 
-fn install_browser_trust(ca_crt_path: &Path, nicknames: &NssNicknames) -> Vec<String> {
+/// Run `action` on every browser NSS database found for the current user
+/// (see FIREFOX_DIRS and CHROMIUM_NSSDBS), returning one report line each.
+fn for_each_browser_db(action: impl Fn(&Path) -> Result<&'static str, String>) -> Vec<String> {
     if find_program("certutil").is_none() {
         return vec![
-            "certutil not found -- install 'libnss3-tools' (Debian/Ubuntu) to also trust \
+            "certutil not found -- install 'libnss3-tools' (Debian/Ubuntu) to also handle \
              Firefox/Chromium, skipped"
                 .to_string(),
         ];
@@ -1079,7 +1223,7 @@ fn install_browser_trust(ca_crt_path: &Path, nicknames: &NssNicknames) -> Vec<St
     };
     let home = Path::new(&home);
 
-    let report = |label: &str, nss_dir: &Path| match nss_install(nss_dir, ca_crt_path, nicknames) {
+    let report = |label: &str, nss_dir: &Path| match action(nss_dir) {
         Ok(status) => format!("{label}: {status}"),
         Err(e) => format!("{label}: skipped -- {e}"),
     };
@@ -1615,6 +1759,53 @@ mod tests {
         let ca_der = cert_der(&dir.join("ca.crt"));
         let leaf_der = cert_der(&dir.join("certs/x.crt"));
         assert_eq!(parse_certificate(&leaf_der).unwrap().issuer, parse_certificate(&ca_der).unwrap().subject);
+    }
+
+    // --- NSS (browser) trust stores --------------------------------------
+
+    #[test]
+    fn certutil_listing() {
+        let listing = "\nCertificate Nickname                                         Trust Attributes\n\
+                       \x20                                                            SSL,S/MIME,JAR/XPI\n\n\
+                       BoringCA Root (ca-cba7de92)                                  C,,  \n\
+                       My  Spaced   CA (x-1)                                        CT,C,C\n\
+                       user cert                                                    u,u,u\n";
+        assert_eq!(nss_list_nicknames(listing), ["BoringCA Root (ca-cba7de92)", "My  Spaced   CA (x-1)", "user cert"]);
+    }
+
+    /// Install then uninstall in a scratch NSS database, next to another
+    /// store's CA with the same CN, which must be left alone. Needs
+    /// certutil (libnss3-tools), skipped without it.
+    #[test]
+    fn nss_install_then_uninstall() {
+        if find_program("certutil").is_none() {
+            eprintln!("certutil not found, skipping");
+            return;
+        }
+        let tmp = TempDir::new("nss");
+        let db = tmp.0.join("nssdb");
+        fs::create_dir_all(&db).unwrap();
+        let created = Command::new("certutil")
+            .args(["-N", "-d", &format!("sql:{}", db.display()), "--empty-password"])
+            .status()
+            .unwrap();
+        assert!(created.success());
+
+        let (one, two) = (tmp.0.join("one"), tmp.0.join("two"));
+        create_ca(&one, "Root", 30).unwrap();
+        create_ca(&two, "Root", 30).unwrap();
+        let nicknames = |dir: &Path| NssNicknames {
+            current: nss_nickname("Root", &store_stem(dir)),
+            legacy: nss_nickname("Root", &legacy_store_stem(dir)),
+        };
+        assert_eq!(nss_install(&db, &one.join("ca.crt"), &nicknames(&one)).unwrap(), "installed");
+        assert_eq!(nss_install(&db, &two.join("ca.crt"), &nicknames(&two)).unwrap(), "installed");
+
+        assert_eq!(nss_uninstall(&db, &store_stem(&one), None).unwrap(), "removed");
+        assert_eq!(nss_uninstall(&db, &store_stem(&one), None).unwrap(), "not installed");
+        let db_arg = format!("sql:{}", db.display());
+        assert!(nss_cert_named(&db_arg, &nicknames(&one).current).is_none());
+        assert!(nss_cert_named(&db_arg, &nicknames(&two).current).is_some(), "other store's CA removed");
     }
 
     #[test]
